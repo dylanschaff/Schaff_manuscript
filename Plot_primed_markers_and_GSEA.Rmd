@@ -1,0 +1,120 @@
+---
+title: "Plot_primed_markers_and_GSEA"
+output: html_document
+date: "2024-08-22"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+#knitr::opts_knit$set(root.dir = '/Users/phoebewhite/Library/CloudStorage/GoogleDrive-phoebewhite@sydshafferlab.com/.shortcut-targets-by-id/1jTEIOfrKhnb_l5390zZHfgBXhT77dXPF/Schaff_Shared/Cloud/Schaff_paper') # for phoebe
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(fgsea)
+`%nin%` = Negate(`%in%`)
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Make all_naive object
+```{r, include=FALSE}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+all_naive <- subset(all_data, idents = 'naive')
+all_naive <- all_naive %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+```
+
+# Output important markers we have consistentyl studied
+```{r}
+pdf('Plot_primed_markers_and_GSEA/primed_markers.pdf')
+FeaturePlot(all_naive, features = 'EGFR', order = T, pt.size = 2, reduction = 'umap')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme()
+FeaturePlot(all_naive, features = 'NGFR', order = T, pt.size = 2, reduction = 'umap')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme()
+FeaturePlot(all_naive, features = 'AXL', order = T, pt.size = 2, reduction = 'umap')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme()
+FeaturePlot(all_naive, features = 'NT5E', order = T, pt.size = 2, reduction = 'umap')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme()
+FeaturePlot(all_naive, features = 'JUN', order = T, pt.size = 2, reduction = 'umap')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme()
+FeaturePlot(all_naive, features = 'MITF', order = T, pt.size = 2, reduction = 'umap')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme()
+FeaturePlot(all_naive, features = 'SOX10', order = T, pt.size = 2, reduction = 'umap')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme()
+dev.off()
+```
+
+
+# Run GSEA on seurat clusters
+```{r}
+list_markers <- list()
+for (j in c(0:7)){
+  list_markers[[paste0('Cluster',j)]] <- FindMarkers(all_naive, ident.1 = j, only.pos = F)
+}
+
+# Load in the GO pathways downloaded from MSigDB
+human_gene_sets <- readLines('Plot_primed_markers_and_GSEA/h.all.v2023.2.Hs.symbols.gmt.txt')
+human_gene_sets <- strsplit(human_gene_sets,'\t')
+
+Hs.H <- list()
+for(i in 1:length(human_gene_sets)){
+  Hs.H[[human_gene_sets[[i]][1]]] <- as.character(human_gene_sets[[i]][3:length(human_gene_sets[[i]])])
+}
+
+# Do fgsea
+fgsea_list <-list()
+for(i in names(list_markers)){
+  ranks <- list_markers[[i]]$avg_log2FC
+  names(ranks) <- rownames(list_markers[[i]])
+  ranks <- sort(ranks, decreasing = T)
+  
+  fgsea_list[[i]] <- fgsea(Hs.H, ranks, minSize=5, maxSize = 500)
+}
+
+# Plot results
+pdf('Plot_primed_markers_and_GSEA/fgsea.pdf')
+DimPlot(all_naive)
+for(i in names(fgsea_list)){
+  print(ggplot(fgsea_list[[i]], aes(reorder(pathway,NES), NES)) +
+          geom_col(aes(fill=padj<0.05)) +
+          coord_flip()+
+          labs(x = 'Pathway', y = 'Normalized Enrichment Score',
+               title = i)+ 
+          theme_minimal())
+}
+dev.off()
+
+```
+
+# Write the FindMarkers and fgsea into excel files
+```{r}
+# Find Markers results
+write.xlsx(list_markers$Cluster0, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster0", row.names=T)
+write.xlsx(list_markers$Cluster1, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster1", append=TRUE, row.names=T)
+write.xlsx(list_markers$Cluster2, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster2", append=TRUE, row.names=T)
+write.xlsx(list_markers$Cluster3, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster3", append=TRUE, row.names=T)
+write.xlsx(list_markers$Cluster4, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster4", append=TRUE, row.names=T)
+write.xlsx(list_markers$Cluster5, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster5", append=TRUE, row.names=T)
+write.xlsx(list_markers$Cluster6, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster6", append=TRUE, row.names=T)
+write.xlsx(list_markers$Cluster7, file="Plot_primed_markers_and_GSEA/Supplementary_Table2_FindMarkers_untreated_clusters.xlsx", sheetName="Cluster7", append=TRUE, row.names=T)
+
+# fgsea results
+write.xlsx(fgsea_list$Cluster0[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster0", row.names=F)
+write.xlsx(fgsea_list$Cluster1[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster1", append = T, row.names=F)
+write.xlsx(fgsea_list$Cluster2[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster2", append = T, row.names=F)
+write.xlsx(fgsea_list$Cluster3[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster3", append = T, row.names=F)
+write.xlsx(fgsea_list$Cluster4[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster4", append = T, row.names=F)
+write.xlsx(fgsea_list$Cluster5[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster5", append = T, row.names=F)
+write.xlsx(fgsea_list$Cluster6[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster6", append = T, row.names=F)
+write.xlsx(fgsea_list$Cluster7[,-8], file="Plot_primed_markers_and_GSEA/Supplementary_Table3_FGSEA_untreated_clusters.xlsx", sheetName="Cluster7", append = T, row.names=F)
+
+```
+

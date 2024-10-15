@@ -1,0 +1,111 @@
+---
+title: "preprocess_gDNA_BCs"
+output: html_document
+date: "2023-04-05"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(xlsx)
+library(ggplot2)
+```
+
+# Load the gDNA count data in
+```{r, include=FALSE}
+temp <- list.files(path='Data/Sequencing_data/2022_01_11_DLS005_PrepBarcodesCellRanger/starcode_inputs', pattern='*gDNA*', full.names = T)
+gDNA_files <- lapply(temp, read.delim, header = F)
+list_names <- list.files(path='Data/Sequencing_data/2022_01_11_DLS005_PrepBarcodesCellRanger/starcode_inputs', pattern='*gDNA*')
+names(gDNA_files) <- list_names
+```
+
+# Load in the reference file of barcodes
+```{r, include=FALSE}
+reference <- read.delim('Data/Sequencing_data/2022_01_11_DLS005_PrepBarcodesCellRanger/CellRanger_inputs/FeatureReference_filtered.csv', sep = ',')
+```
+
+# Remove extra files
+```{r, include=FALSE}
+rm(temp, list_names)
+```
+
+# Give the columns from each df descriptive names
+```{r, include=FALSE}
+for (i in names(gDNA_files)){
+  names(gDNA_files[[i]]) <- c('sample','reads')
+}
+```
+
+# Get basic statistics of each condition
+```{r, include=FALSE}
+# Establish how many total barcodes per condition (should be the same since they have the same reference), number of total reads per condition, number pf barcodes with more than 0 reads, number of barcodes with more than 2 reads, number of reads from barcodes with more than 2 reads, and how many total reads are lost by filtering on barcodes with at least 2 reads
+
+gDNA_basic_stats <- data.frame()
+for (i in names(gDNA_files)){
+  temp_df <- data.frame(Cond = i, Num_BCs = nrow(gDNA_files[[i]]), Num_reads = sum(gDNA_files[[i]]$reads), Num_BCs_greater0 = nrow(gDNA_files[[i]][gDNA_files[[i]]$reads > 0,]), Num_BCs_greater2 = nrow(gDNA_files[[i]][gDNA_files[[i]]$reads > 2,]),Num_reads_greater2 = sum(gDNA_files[[i]][gDNA_files[[i]]$reads > 2,]$reads), reads_lost_greater2 = sum(gDNA_files[[i]]$reads)-sum(gDNA_files[[i]][gDNA_files[[i]]$reads > 2,]$reads), Num_reads_greater5 = sum(gDNA_files[[i]][gDNA_files[[i]]$reads > 5,]$reads), reads_lost_greater5 = sum(gDNA_files[[i]]$reads)-sum(gDNA_files[[i]][gDNA_files[[i]]$reads > 5,]$reads))
+  gDNA_basic_stats <- rbind(gDNA_basic_stats,temp_df)
+}
+# remove temporary files
+rm(temp_df)
+```
+
+# Print out the rank ordered barcode plots
+```{r, include=FALSE}
+for (i in names(gDNA_files)){
+  pdf(paste('preprocess_gDNA_BCs/plot_greater2reads_',i,'.pdf', sep = ''))
+  print(ggplot(data = gDNA_files[[i]][gDNA_files[[i]]$reads > 2,], aes(reorder(sample,-reads), log2(reads)))+geom_bar(stat='identity') +  
+          theme(axis.text.x=element_blank()) + labs(x = 'Rank ordered barcodes', y = 'Log(reads per barcode)', title = paste(i, 'n =',length(gDNA_files[[i]][gDNA_files[[i]]$reads > 2,]$reads))))
+  dev.off()
+}
+```
+
+# Assign the correct lineage name to each of the conditions
+```{r, include=FALSE}
+gDNA_anno <- list()
+for (j in names(gDNA_files)){
+  temp <- gDNA_files[[j]]
+  temp$sequence <- substr(temp$sample, 17, nchar(temp$sample))
+  temp2 <- merge(temp, reference, by  = 'sequence')
+  temp3 <- data.frame(Lineage = temp2$name, BC_seq = temp2$sequence, Full_seq = temp2$sample, Reads = temp2$reads)
+  gDNA_anno[[j]] <- temp3[order(-temp3$Reads),]
+}
+```
+
+# make function for RPM normalization
+```{r, include=FALSE}
+rpm_norm <- function(x) {
+  return(x/sum(x)*1000000)
+}
+
+# Add the RPM data to each gDNA ----
+for (j in names(gDNA_anno)){
+  gDNA_anno[[j]]$RPM <- rpm_norm(gDNA_anno[[j]]$Reads)
+}
+
+for (j in names(gDNA_files)){
+  gDNA_files[[j]]$RPM <- rpm_norm(gDNA_files[[j]]$reads)
+}
+```
+
+# Print out plots of RPM
+```{r, include=FALSE}
+for (i in names(gDNA_files)){
+  pdf(paste('preprocess_gDNA_BCs/plot_greater2reads_',i,'_RPM.pdf', sep = ''))
+  print(ggplot(data = gDNA_files[[i]][gDNA_files[[i]]$reads > 2,], aes(reorder(sample,-RPM), log2(RPM)))+geom_bar(stat='identity') +  
+          theme(axis.text.x=element_blank()) + labs(x = 'Rank ordered barcodes', y = 'Log(reads per barcode)', title = paste(i, 'n =',length(gDNA_files[[i]][gDNA_files[[i]]$reads > 2,]$reads))))
+  dev.off()
+}
+```
+
+# Export the data for next step
+```{r, include=FALSE}
+save(gDNA_basic_stats, gDNA_files, gDNA_anno, file = 'preprocess_gDNA_BCs/preprocessed_gDNA.RData')
+write.xlsx(gDNA_basic_stats, 'preprocess_gDNA_BCs/gDNA_basic_stats.xlsx')
+```

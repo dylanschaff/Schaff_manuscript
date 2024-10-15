@@ -1,0 +1,1213 @@
+---
+title: "reload_NMF_objects"
+output: html_document
+date: "2024-04-02"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(reticulate)
+library(SeuratDisk)
+library(scCustomize)
+library(viridis)
+library(clusterProfiler)
+library(pheatmap)
+library(UCell)
+library(fgsea)
+`%nin%` = Negate(`%in%`)
+num_lin =25
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B')
+```
+
+# Load in the seurat objects
+```{r, include = F}
+naive <- LoadH5Seurat('NMF/naive.h5Seurat')
+dab <- LoadH5Seurat('NMF/dab.h5Seurat')
+tram <- LoadH5Seurat('NMF/tram.h5Seurat')
+cocl2 <- LoadH5Seurat('NMF/cocl2.h5Seurat')
+acid <- LoadH5Seurat('NMF/acid.h5Seurat')
+cis <- LoadH5Seurat('NMF/cis.h5Seurat')
+dox <- LoadH5Seurat('NMF/dox.h5Seurat')
+all_data <- LoadH5Seurat('NMF/all_data.h5Seurat')
+```
+
+# Load in the usages
+```{r, include = F}
+naive_nmf <- read.delim('NMF/naive/naive_cNMF/naive_cNMF.usages.k_12.dt_0_175.consensus.txt')
+dab_nmf <- read.delim('NMF/dab/dab_cNMF/dab_cNMF.usages.k_13.dt_0_25.consensus.txt')
+tram_nmf <- read.delim('NMF/tram/tram_cNMF/tram_cNMF.usages.k_8.dt_0_2.consensus.txt')
+cocl2_nmf <- read.delim('NMF/cocl2/cocl2_cNMF/cocl2_cNMF.usages.k_12.dt_0_2.consensus.txt')
+acid_nmf <- read.delim('NMF/acid/acid_cNMF/acid_cNMF.usages.k_8.dt_0_05.consensus.txt')
+cis_nmf <- read.delim('NMF/cis/cis_cNMF/cis_cNMF.usages.k_11.dt_0_2.consensus.txt')
+dox_nmf <- read.delim('NMF/dox/dox_cNMF/dox_cNMF.usages.k_11.dt_0_275.consensus.txt')
+all_data_nmf <- read.delim('NMF/all_data/all_data_cNMF/all_data_cNMF.usages.k_9.dt_0_05.consensus.txt')
+```
+
+# Add the nmf as metadata
+```{r, include = F}
+for (i in 2:ncol(naive_nmf)){
+  naive[[paste0('Usage',i-1)]]<- naive_nmf[,i]
+}
+for (i in 2:ncol(dab_nmf)){
+  dab[[paste0('Usage',i-1)]]<- dab_nmf[,i]
+}
+for (i in 2:ncol(tram_nmf)){
+  tram[[paste0('Usage',i-1)]]<- tram_nmf[,i]
+}
+for (i in 2:ncol(cocl2_nmf)){
+  cocl2[[paste0('Usage',i-1)]]<- cocl2_nmf[,i]
+}
+for (i in 2:ncol(acid_nmf)){
+  acid[[paste0('Usage',i-1)]]<- acid_nmf[,i]
+}
+for (i in 2:ncol(cis_nmf)){
+  cis[[paste0('Usage',i-1)]]<- cis_nmf[,i]
+}
+for (i in 2:ncol(dox_nmf)){
+  dox[[paste0('Usage',i-1)]]<- dox_nmf[,i]
+}
+for (i in 2:ncol(all_data_nmf)){
+  all_data[[paste0('Usage',i-1)]]<- all_data_nmf[,i]
+}
+```
+
+# Make a clones dataframe 
+```{r}
+clones_df <- data.frame(matrix(ncol = 1, nrow = 1))
+colnames(clones_df) <- 'Lineage'
+
+for (i in unique(all_data$OG_condition)){
+  temp_df <- as.data.frame(table(all_data$assigned_lineage[all_data$OG_condition == i]))
+  colnames(temp_df) <- c('Lineage', i)
+  clones_df <-merge(clones_df, temp_df, all = T)
+  rm(temp_df)
+}
+clones_df <- clones_df[-which(clones_df$Lineage == 'NA'),]
+```
+
+# Make stacked violin plot for conditions and usages in all_data
+```{r}
+pdf('NMF/all_data_NMF_on_UMAP_and_Vln.pdf',10,10)
+FeaturePlot_scCustom(all_data, features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], col = viridis(n = 10, option = "D"))
+Stacked_VlnPlot(all_data, features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B'),
+           x_lab_rotate = T)
+dev.off()
+```
+
+# Make stacked violin plot for conditions and usages in naive
+```{r}
+pdf('NMF/naive_NMF_on_UMAP.pdf',10,10)
+FeaturePlot_scCustom(naive, features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))], col = viridis(n = 10, option = "D"))
+
+dev.off()
+
+# plot different primed lineages based on naive NMF programs
+Idents(naive) <- naive$assigned_lineage
+for (i in c('dab','tram','cocl2','acid','cis','dox')){
+  pdf(paste0('NMF/naive_NMF_',i,'_res_on_vln.pdf'),5,5)
+  Idents(naive) <- naive$assigned_lineage
+  print(Stacked_VlnPlot(subset(naive, idents = clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][[i]], decreasing = T)[1:25],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))][1:4], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T))
+  dev.off()
+}
+
+```
+
+# Make stacked violin plot for conditions and usages in dab
+```{r}
+pdf('NMF/dab_NMF_on_UMAP.pdf',10,10)
+FeaturePlot_scCustom(dab, features = names(dab@meta.data)[grep('Usage',names(dab@meta.data))], col = viridis(n = 10, option = "D"))
+
+dev.off()
+
+pdf('NMF/dab_top_clones_Vln.pdf')
+# plot different primed lineages based on naive NMF programs
+Idents(dab) <- dab$assigned_lineage
+Stacked_VlnPlot(subset(dab, idents = clones_df[order(clones_df[['dab']], decreasing = T)[1:10],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(dab@meta.data))][1:11], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+Stacked_VlnPlot(subset(dab, idents = clones_df[order(clones_df[['dab']], decreasing = T)[11:20],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(dab@meta.data))][1:11], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+dev.off()
+```
+
+# Make stacked violin plot for conditions and usages in tram
+```{r}
+pdf('NMF/tram_NMF_on_UMAP.pdf',10,10)
+FeaturePlot_scCustom(tram, features = names(tram@meta.data)[grep('Usage',names(tram@meta.data))], col = viridis(n = 10, option = "D"))
+
+dev.off()
+
+pdf('NMF/tram_top_clones_Vln.pdf')
+# plot different primed lineages based on naive NMF programs
+Idents(tram) <- tram$assigned_lineage
+Stacked_VlnPlot(subset(tram, idents = clones_df[order(clones_df[['tram']], decreasing = T)[1:10],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(tram@meta.data))][1:11], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+Stacked_VlnPlot(subset(tram, idents = clones_df[order(clones_df[['tram']], decreasing = T)[11:20],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(tram@meta.data))][1:11], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+dev.off()
+```
+
+# Make stacked violin plot for conditions and usages in cocl2
+```{r}
+pdf('NMF/cocl2_NMF_on_UMAP.pdf',10,10)
+FeaturePlot_scCustom(cocl2, features = names(cocl2@meta.data)[grep('Usage',names(cocl2@meta.data))], col = viridis(n = 10, option = "D"))
+
+dev.off()
+
+pdf('NMF/cocl2_top_clones_Vln.pdf')
+# plot different primed lineages based on naive NMF programs
+Idents(cocl2) <- cocl2$assigned_lineage
+Stacked_VlnPlot(subset(cocl2, idents = clones_df[order(clones_df[['cocl2']], decreasing = T)[1:10],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(cocl2@meta.data))][1:7], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+Stacked_VlnPlot(subset(cocl2, idents = clones_df[order(clones_df[['cocl2']], decreasing = T)[11:20],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(cocl2@meta.data))][1:7], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+dev.off()
+```
+
+# Make stacked violin plot for conditions and usages in acid
+```{r}
+pdf('NMF/acid_NMF_on_UMAP.pdf',10,10)
+FeaturePlot_scCustom(acid, features = names(acid@meta.data)[grep('Usage',names(acid@meta.data))], col = viridis(n = 10, option = "D"))
+
+dev.off()
+
+pdf('NMF/acid_top_clones_Vln.pdf')
+# plot different primed lineages based on naive NMF programs
+Idents(acid) <- acid$assigned_lineage
+Stacked_VlnPlot(subset(acid, idents = clones_df[order(clones_df[['acid']], decreasing = T)[1:10],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(acid@meta.data))][1:7], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+Stacked_VlnPlot(subset(acid, idents = clones_df[order(clones_df[['acid']], decreasing = T)[11:20],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(acid@meta.data))][1:7], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+dev.off()
+```
+
+# Make stacked violin plot for conditions and usages in cis
+```{r}
+pdf('NMF/cis_NMF_on_UMAP.pdf',10,10)
+FeaturePlot_scCustom(cis, features = names(cis@meta.data)[grep('Usage',names(cis@meta.data))], col = viridis(n = 10, option = "D"))
+
+dev.off()
+
+pdf('NMF/cis_top_clones_Vln.pdf')
+# plot different primed lineages based on naive NMF programs
+Idents(cis) <- cis$assigned_lineage
+Stacked_VlnPlot(subset(cis, idents = clones_df[order(clones_df[['cis']], decreasing = T)[1:10],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(cis@meta.data))][1:9], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+Stacked_VlnPlot(subset(cis, idents = clones_df[order(clones_df[['cis']], decreasing = T)[11:20],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(cis@meta.data))][1:9], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+dev.off()
+```
+
+# Make stacked violin plot for conditions and usages in dox
+```{r}
+pdf('NMF/dox_NMF_on_UMAP.pdf',10,10)
+FeaturePlot_scCustom(dox, features = names(dox@meta.data)[grep('Usage',names(dox@meta.data))], col = viridis(n = 10, option = "D"))
+
+dev.off()
+
+pdf('NMF/dox_top_clones_Vln.pdf')
+# plot different primed lineages based on naive NMF programs
+Idents(dox) <- dox$assigned_lineage
+Stacked_VlnPlot(subset(dox, idents = clones_df[order(clones_df[['dox']], decreasing = T)[1:10],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(dox@meta.data))][1:2], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+Stacked_VlnPlot(subset(dox, idents = clones_df[order(clones_df[['dox']], decreasing = T)[11:20],]$Lineage), features = names(naive@meta.data)[grep('Usage',names(dox@meta.data))][1:2], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T)
+dev.off()
+```
+
+# Run gene ontology 
+```{r}
+# Load in the GO pathways downloaded from MSigDB
+human_gene_sets <- readLines('NMF/h.all.v2023.2.Hs.symbols.gmt.txt')
+human_gene_sets <- strsplit(human_gene_sets,'\t')
+
+Hs.H <- list()
+for(i in 1:length(human_gene_sets)){
+  Hs.H[[human_gene_sets[[i]][1]]] <- as.character(human_gene_sets[[i]][3:length(human_gene_sets[[i]])])
+}
+
+# Load in the text files for the different embeddings' top genes
+naive_topgenes <- read.delim('NMF/naive/naive_topgenes.txt')
+dab_topgenes <- read.delim('NMF/dab/dab_topgenes.txt')
+tram_topgenes <- read.delim('NMF/tram/tram_topgenes.txt')
+cocl2_topgenes <- read.delim('NMF/cocl2/cocl2_topgenes.txt')
+acid_topgenes <- read.delim('NMF/acid/acid_topgenes.txt')
+cis_topgenes <- read.delim('NMF/cis/cis_topgenes.txt')
+dox_topgenes <- read.delim('NMF/dox/dox_topgenes.txt')
+all_data_topgenes <- read.delim('NMF/all_data/all_data_topgenes.txt')
+
+# Load in the gep_scores_per_gene
+naive_gep_scores <- read.delim('NMF/naive/naive_gep_scores.txt')
+dab_gep_scores <- read.delim('NMF/dab/dab_gep_scores.txt')
+tram_gep_scores <- read.delim('NMF/tram/tram_gep_scores.txt')
+cocl2_gep_scores <- read.delim('NMF/cocl2/cocl2_gep_scores.txt')
+acid_gep_scores <- read.delim('NMF/acid/acid_gep_scores.txt')
+cis_gep_scores <- read.delim('NMF/cis/cis_gep_scores.txt')
+dox_gep_scores <- read.delim('NMF/dox/dox_gep_scores.txt')
+all_data_gep_scores <- read.delim('NMF/all_data/all_data_gep_scores.txt')
+
+# Naive
+naive_fgsea <- list()
+pdf('NMF/GSEA_Plots_Naive.pdf',10,10)
+for (j in 1:(ncol(naive_gep_scores)-1)){
+  temp_scores <- naive_gep_scores[,j+1]
+  names(temp_scores) <- naive_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  naive_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(naive_fgsea[[paste0('Usage',j)]][!is.na(naive_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# dab
+dab_fgsea <- list()
+pdf('NMF/GSEA_Plots_dab.pdf',10,10)
+for (j in 1:(ncol(dab_gep_scores)-1)){
+  temp_scores <- dab_gep_scores[,j+1]
+  names(temp_scores) <- dab_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  dab_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(dab_fgsea[[paste0('Usage',j)]][!is.na(dab_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# tram
+tram_fgsea <- list()
+pdf('NMF/GSEA_Plots_tram.pdf',10,10)
+for (j in 1:(ncol(tram_gep_scores)-1)){
+  temp_scores <- tram_gep_scores[,j+1]
+  names(temp_scores) <- tram_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  tram_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(tram_fgsea[[paste0('Usage',j)]][!is.na(tram_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# cocl2
+cocl2_fgsea <- list()
+pdf('NMF/GSEA_Plots_cocl2.pdf',10,10)
+for (j in 1:(ncol(cocl2_gep_scores)-1)){
+  temp_scores <- cocl2_gep_scores[,j+1]
+  names(temp_scores) <- cocl2_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  cocl2_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(cocl2_fgsea[[paste0('Usage',j)]][!is.na(cocl2_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# acid
+acid_fgsea <- list()
+pdf('NMF/GSEA_Plots_acid.pdf',10,10)
+for (j in 1:(ncol(acid_gep_scores)-1)){
+  temp_scores <- acid_gep_scores[,j+1]
+  names(temp_scores) <- acid_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  acid_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(acid_fgsea[[paste0('Usage',j)]][!is.na(acid_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# cis
+cis_fgsea <- list()
+pdf('NMF/GSEA_Plots_cis.pdf',10,10)
+for (j in 1:(ncol(cis_gep_scores)-1)){
+  temp_scores <- cis_gep_scores[,j+1]
+  names(temp_scores) <- cis_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  cis_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(cis_fgsea[[paste0('Usage',j)]][!is.na(cis_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# dox
+dox_fgsea <- list()
+pdf('NMF/GSEA_Plots_dox.pdf',10,10)
+for (j in 1:(ncol(dox_gep_scores)-1)){
+  temp_scores <- dox_gep_scores[,j+1]
+  names(temp_scores) <- dox_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  dox_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(dox_fgsea[[paste0('Usage',j)]][!is.na(dox_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# all_data
+all_data_fgsea <- list()
+pdf('NMF/GSEA_Plots_all_data.pdf',10,10)
+for (j in 1:(ncol(all_data_gep_scores)-1)){
+  temp_scores <- all_data_gep_scores[,j+1]
+  names(temp_scores) <- all_data_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  all_data_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(all_data_fgsea[[paste0('Usage',j)]][!is.na(all_data_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj<=0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+```
+
+# Cluster lineages based on NMF programs
+```{r}
+# Dabrafenib - Use 11 usages
+dab_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['dab']], decreasing = T),]$Lineage[1:num_lin]
+  
+dab_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:11){
+  dab_lin_usages_df[[paste0('Usage',i)]] <- sapply(dab_lins, function(x) mean(dab[[paste0('Usage',i)]][dab$assigned_lineage == x,]))
+  
+}
+rownames(dab_lin_usages_df) <- dab_lins  
+pdf('NMF/dab_lin_usage_heatmap.pdf')
+dab_heatmap <- pheatmap(t(dab_lin_usages_df), scale = 'column', main = 'Dabrafenib', cutree_cols = 3)
+dev.off()
+
+# Trametinib - Use 8 usages
+tram_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['tram']], decreasing = T),]$Lineage[1:num_lin]
+  
+tram_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:8){
+  tram_lin_usages_df[[paste0('Usage',i)]] <- sapply(tram_lins, function(x) mean(tram[[paste0('Usage',i)]][tram$assigned_lineage == x,]))
+  
+}
+rownames(tram_lin_usages_df) <- tram_lins  
+pdf('NMF/tram_lin_usage_heatmap.pdf')
+tram_heatmap <- pheatmap(t(tram_lin_usages_df), scale = 'column', main = 'Trametinib', cutree_cols = 4)
+dev.off()
+
+# CoCl2 - Use 7 usages
+cocl2_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['cocl2']], decreasing = T),]$Lineage[1:num_lin]
+  
+cocl2_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:7){
+  cocl2_lin_usages_df[[paste0('Usage',i)]] <- sapply(cocl2_lins, function(x) mean(cocl2[[paste0('Usage',i)]][cocl2$assigned_lineage == x,]))
+  
+}
+rownames(cocl2_lin_usages_df) <- cocl2_lins  
+pdf('NMF/cocl2_lin_usage_heatmap.pdf')
+cocl2_heatmap <- pheatmap(t(cocl2_lin_usages_df), scale = 'column', main = 'CoCl2', cutree_cols = 4)
+dev.off()
+
+# acid - Use 7 usages
+acid_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['acid']], decreasing = T),]$Lineage[1:num_lin]
+  
+acid_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:7){
+  acid_lin_usages_df[[paste0('Usage',i)]] <- sapply(acid_lins, function(x) mean(acid[[paste0('Usage',i)]][acid$assigned_lineage == x,]))
+  
+}
+rownames(acid_lin_usages_df) <- acid_lins  
+pdf('NMF/acid_lin_usage_heatmap.pdf')
+acid_heatmap <- pheatmap(t(acid_lin_usages_df), scale = 'column', main = 'Acid', cutree_cols = 3)
+dev.off()
+
+# cis - Use 9 usages
+cis_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['cis']], decreasing = T),]$Lineage[1:num_lin]
+  
+cis_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:9){
+  cis_lin_usages_df[[paste0('Usage',i)]] <- sapply(cis_lins, function(x) mean(cis[[paste0('Usage',i)]][cis$assigned_lineage == x,]))
+  
+}
+rownames(cis_lin_usages_df) <- cis_lins  
+pdf('NMF/cis_lin_usage_heatmap.pdf')
+cis_heatmap <- pheatmap(t(cis_lin_usages_df), scale = 'column', main = 'Cisplatin', cutree_cols = 4)
+dev.off()
+
+# dox - Use 2 usages
+dox_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['dox']], decreasing = T),]$Lineage[1:num_lin]
+  
+dox_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:2){
+  dox_lin_usages_df[[paste0('Usage',i)]] <- sapply(dox_lins, function(x) mean(dox[[paste0('Usage',i)]][dox$assigned_lineage == x,]))
+  
+}
+rownames(dox_lin_usages_df) <- dox_lins  
+pdf('NMF/dox_lin_usage_heatmap.pdf')
+dox_heatmap <- pheatmap(t(dox_lin_usages_df), scale = 'column', main = 'Doxorubicin', cutree_cols = 2)
+dev.off()
+
+pdf('NMF/all_lineage_usage_Heatmaps.pdf')
+print(dab_heatmap)
+print(tram_heatmap)
+print(cocl2_heatmap)
+print(acid_heatmap)
+print(cis_heatmap)
+print(dox_heatmap)
+dev.off()
+```
+
+# Cluster resistant lineages based on naive NMF programs
+```{r}
+# Dabrafenib - Use 11 usages
+dab_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['dab']], decreasing = T),]$Lineage[1:num_lin]
+  
+dab_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  dab_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(dab_lins, function(x) mean(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,]))
+  
+}
+rownames(dab_lin_naive_usages_df) <- dab_lins  
+pdf('NMF/dab_lin_naive_usage_heatmap.pdf')
+dab_heatmap <- pheatmap(t(dab_lin_naive_usages_df), scale = 'column', main = 'Dabrafenib', cutree_cols = 4)
+dev.off()
+
+# tram - Use 11 usages
+tram_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['tram']], decreasing = T),]$Lineage[1:num_lin]
+  
+tram_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  tram_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(tram_lins, function(x) mean(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,]))
+  
+}
+rownames(tram_lin_naive_usages_df) <- tram_lins  
+pdf('NMF/tram_lin_naive_usage_heatmap.pdf')
+tram_heatmap <- pheatmap(t(tram_lin_naive_usages_df), scale = 'column', main = 'tramrafenib', cutree_cols = 4)
+dev.off()
+
+# cocl2 - Use 11 usages
+cocl2_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['cocl2']], decreasing = T),]$Lineage[1:num_lin]
+  
+cocl2_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  cocl2_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(cocl2_lins, function(x) mean(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,]))
+  
+}
+rownames(cocl2_lin_naive_usages_df) <- cocl2_lins  
+pdf('NMF/cocl2_lin_naive_usage_heatmap.pdf')
+cocl2_heatmap <- pheatmap(t(cocl2_lin_naive_usages_df), scale = 'column', main = 'cocl2rafenib', cutree_cols = 4)
+dev.off()
+
+# acid - Use 11 usages
+acid_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['acid']], decreasing = T),]$Lineage[1:num_lin]
+  
+acid_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  acid_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(acid_lins, function(x) mean(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,]))
+  
+}
+rownames(acid_lin_naive_usages_df) <- acid_lins  
+pdf('NMF/acid_lin_naive_usage_heatmap.pdf')
+acid_heatmap <- pheatmap(t(acid_lin_naive_usages_df), scale = 'column', main = 'acidrafenib', cutree_cols = 4)
+dev.off()
+
+
+# cis - Use 11 usages
+cis_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['cis']], decreasing = T),]$Lineage[1:num_lin]
+  
+cis_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  cis_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(cis_lins, function(x) mean(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,]))
+  
+}
+rownames(cis_lin_naive_usages_df) <- cis_lins  
+pdf('NMF/cis_lin_naive_usage_heatmap.pdf')
+cis_heatmap <- pheatmap(t(cis_lin_naive_usages_df), scale = 'column', main = 'cisrafenib', cutree_cols = 4)
+dev.off()
+
+# dox - Use 11 usages
+dox_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['dox']], decreasing = T),]$Lineage[1:num_lin]
+  
+dox_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  dox_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(dox_lins, function(x) mean(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,]))
+  
+}
+rownames(dox_lin_naive_usages_df) <- dox_lins  
+pdf('NMF/dox_lin_naive_usage_heatmap.pdf')
+dox_heatmap <- pheatmap(t(dox_lin_naive_usages_df), scale = 'column', main = 'doxrafenib', cutree_cols = 4)
+dev.off()
+
+```
+
+# Cluster lineages based on NMF programs - more lins
+```{r}
+# Dabrafenib - Use 11 usages
+dab_lins <- clones_df[which(clones_df$naive > 2),][order(clones_df[which(clones_df$naive > 2),][['dab']], decreasing = T),]$Lineage[1:(num_lin*4)]
+  
+dab_lin_usages_df <- data.frame(matrix(vector(),num_lin*4,0))
+for (i in 1:11){
+  dab_lin_usages_df[[paste0('Usage',i)]] <- sapply(dab_lins, function(x) mean(dab[[paste0('Usage',i)]][dab$assigned_lineage == x,]))
+  
+}
+rownames(dab_lin_usages_df) <- dab_lins  
+pdf('NMF/dab_lin_usage_heatmap_more.pdf')
+dab_heatmap <- pheatmap(t(dab_lin_usages_df), scale = 'column', main = 'Dabrafenib', cutree_cols = 3)
+dev.off()
+
+# Trametinib - Use 8 usages
+tram_lins <- clones_df[which(clones_df$naive > 2),][order(clones_df[which(clones_df$naive > 2),][['tram']], decreasing = T),]$Lineage[1:(num_lin*4)]
+  
+tram_lin_usages_df <- data.frame(matrix(vector(),num_lin*4,0))
+for (i in 1:8){
+  tram_lin_usages_df[[paste0('Usage',i)]] <- sapply(tram_lins, function(x) mean(tram[[paste0('Usage',i)]][tram$assigned_lineage == x,]))
+  
+}
+rownames(tram_lin_usages_df) <- tram_lins  
+pdf('NMF/tram_lin_usage_heatmap_more.pdf')
+tram_heatmap <- pheatmap(t(tram_lin_usages_df), scale = 'column', main = 'Trametinib', cutree_cols = 4)
+dev.off()
+
+# CoCl2 - Use 7 usages
+cocl2_lins <- clones_df[which(clones_df$naive > 2),][order(clones_df[which(clones_df$naive > 2),][['cocl2']], decreasing = T),]$Lineage[1:(num_lin*4)]
+  
+cocl2_lin_usages_df <- data.frame(matrix(vector(),num_lin*4,0))
+for (i in 1:7){
+  cocl2_lin_usages_df[[paste0('Usage',i)]] <- sapply(cocl2_lins, function(x) mean(cocl2[[paste0('Usage',i)]][cocl2$assigned_lineage == x,]))
+  
+}
+rownames(cocl2_lin_usages_df) <- cocl2_lins  
+pdf('NMF/cocl2_lin_usage_heatmap_more.pdf')
+cocl2_heatmap <- pheatmap(t(cocl2_lin_usages_df), scale = 'column', main = 'CoCl2', cutree_cols = 4)
+dev.off()
+
+# acid - Use 7 usages
+acid_lins <- clones_df[which(clones_df$naive > 2),][order(clones_df[which(clones_df$naive > 2),][['acid']], decreasing = T),]$Lineage[1:(num_lin*4)]
+  
+acid_lin_usages_df <- data.frame(matrix(vector(),num_lin*4,0))
+for (i in 1:7){
+  acid_lin_usages_df[[paste0('Usage',i)]] <- sapply(acid_lins, function(x) mean(acid[[paste0('Usage',i)]][acid$assigned_lineage == x,]))
+  
+}
+rownames(acid_lin_usages_df) <- acid_lins  
+pdf('NMF/acid_lin_usage_heatmap_more.pdf')
+acid_heatmap <- pheatmap(t(acid_lin_usages_df), scale = 'column', main = 'Acid', cutree_cols = 3)
+dev.off()
+
+# cis - Use 9 usages
+cis_lins <- clones_df[which(clones_df$naive > 2),][order(clones_df[which(clones_df$naive > 2),][['cis']], decreasing = T),]$Lineage[1:(num_lin*4)]
+  
+cis_lin_usages_df <- data.frame(matrix(vector(),num_lin*4,0))
+for (i in 1:9){
+  cis_lin_usages_df[[paste0('Usage',i)]] <- sapply(cis_lins, function(x) mean(cis[[paste0('Usage',i)]][cis$assigned_lineage == x,]))
+  
+}
+rownames(cis_lin_usages_df) <- cis_lins  
+pdf('NMF/cis_lin_usage_heatmap_more.pdf')
+cis_heatmap <- pheatmap(t(cis_lin_usages_df), scale = 'column', main = 'Cisplatin', cutree_cols = 4)
+dev.off()
+
+# dox - Use 2 usages
+dox_lins <- clones_df[which(clones_df$naive > 2),][order(clones_df[which(clones_df$naive > 2),][['dox']], decreasing = T),]$Lineage[1:(num_lin*4)]
+  
+dox_lin_usages_df <- data.frame(matrix(vector(),num_lin*4,0))
+for (i in 1:2){
+  dox_lin_usages_df[[paste0('Usage',i)]] <- sapply(dox_lins, function(x) mean(dox[[paste0('Usage',i)]][dox$assigned_lineage == x,]))
+  
+}
+rownames(dox_lin_usages_df) <- dox_lins  
+pdf('NMF/dox_lin_usage_heatmap_more.pdf')
+dox_heatmap <- pheatmap(t(dox_lin_usages_df), scale = 'column', main = 'Doxorubicin', cutree_cols = 2)
+dev.off()
+
+pdf('NMF/all_lineage_usage_Heatmaps_more.pdf')
+print(dab_heatmap)
+print(tram_heatmap)
+print(cocl2_heatmap)
+print(acid_heatmap)
+print(cis_heatmap)
+print(dox_heatmap)
+dev.off()
+```
+
+# Take the cut heatmaps and plot cells on naive umap and usages
+```{r}
+# Dabrafenib
+dab_cells_list <- list(
+  Usage1_2 = colnames(naive)[naive$assigned_lineage %in% names(cutree(dab_heatmap$tree_col, k=3)[cutree(dab_heatmap$tree_col, k=3)== 2])],
+  Usage2_3 = colnames(naive)[naive$assigned_lineage %in% names(cutree(dab_heatmap$tree_col, k=3)[cutree(dab_heatmap$tree_col, k=3)== 1])],
+  Usage4 = colnames(naive)[naive$assigned_lineage %in% names(cutree(dab_heatmap$tree_col, k=3)[cutree(dab_heatmap$tree_col, k=3)== 3])]
+)
+pdf('NMF/trace_dab_usages_to_naive.pdf')
+Cell_Highlight_Plot(seurat_object = naive, cells_highlight = dab_cells_list, highlight_color = c('red','blue','green'))
+Idents(naive) <- naive$assigned_lineage
+dab_lins_meta <- dab_lins
+names(dab_lins_meta) <- dab_lins_meta
+dab_lins_meta[dab_lins_meta %in% names(cutree(dab_heatmap$tree_col, k=3)[cutree(dab_heatmap$tree_col, k=3)== 2])] <- 'red'
+dab_lins_meta[dab_lins_meta %in% names(cutree(dab_heatmap$tree_col, k=3)[cutree(dab_heatmap$tree_col, k=3)== 1])] <- 'blue'
+dab_lins_meta[dab_lins_meta %in% names(cutree(dab_heatmap$tree_col, k=3)[cutree(dab_heatmap$tree_col, k=3)== 3])] <- 'green'
+Stacked_VlnPlot(subset(naive, idents = dab_lins), features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))][1:4],
+                colors_use = dab_lins_meta,
+             x_lab_rotate = T)
+dev.off()
+
+# Trametinib
+tram_cells_list <- list(
+  Usage4 = colnames(naive)[naive$assigned_lineage %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 4])],
+  Usage4_1 = colnames(naive)[naive$assigned_lineage %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 3])],
+  Usage1_2 = colnames(naive)[naive$assigned_lineage %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 1])],
+  Usage5 = colnames(naive)[naive$assigned_lineage %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 2])]
+)
+pdf('NMF/trace_tram_usages_to_naive.pdf')
+Cell_Highlight_Plot(seurat_object = naive, cells_highlight = tram_cells_list, highlight_color = c('red','blue','green','orange'))
+Idents(naive) <- naive$assigned_lineage
+tram_lins_meta <- tram_lins
+names(tram_lins_meta) <- tram_lins_meta
+tram_lins_meta[tram_lins_meta %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 4])] <- 'red'
+tram_lins_meta[tram_lins_meta %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 3])] <- 'blue'
+tram_lins_meta[tram_lins_meta %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 1])] <- 'green'
+tram_lins_meta[tram_lins_meta %in% names(cutree(tram_heatmap$tree_col, k=4)[cutree(tram_heatmap$tree_col, k=4)== 2])] <- 'orange'
+Stacked_VlnPlot(subset(naive, idents = tram_lins), features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))][1:4],
+                colors_use = tram_lins_meta,
+             x_lab_rotate = T)
+dev.off()
+
+# CoCl2
+cocl2_cells_list <- list(
+  Usage1_2 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 1])],
+  Usage6 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 2])],
+  Usage4_5 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 4])],
+  Usage4 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 3])]
+)
+pdf('NMF/trace_cocl2_usages_to_naive.pdf')
+Cell_Highlight_Plot(seurat_object = naive, cells_highlight = cocl2_cells_list, highlight_color = c('red','blue','green','orange'))
+Idents(naive) <- naive$assigned_lineage
+cocl2_lins_meta <- cocl2_lins
+names(cocl2_lins_meta) <- cocl2_lins_meta
+cocl2_lins_meta[cocl2_lins_meta %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 1])] <- 'red'
+cocl2_lins_meta[cocl2_lins_meta %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 2])] <- 'blue'
+cocl2_lins_meta[cocl2_lins_meta %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 4])] <- 'green'
+cocl2_lins_meta[cocl2_lins_meta %in% names(cutree(cocl2_heatmap$tree_col, k=4)[cutree(cocl2_heatmap$tree_col, k=4)== 3])] <- 'orange'
+Stacked_VlnPlot(subset(naive, idents = cocl2_lins), features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))][1:4],
+                colors_use = cocl2_lins_meta,
+             x_lab_rotate = T)
+dev.off()
+
+# Acid
+acid_cells_list <- list(
+  Usage1 = colnames(naive)[naive$assigned_lineage %in% names(cutree(acid_heatmap$tree_col, k=3)[cutree(acid_heatmap$tree_col, k=3)== 1])],
+  Usage1_3 = colnames(naive)[naive$assigned_lineage %in% names(cutree(acid_heatmap$tree_col, k=3)[cutree(acid_heatmap$tree_col, k=3)== 3])],
+  Usage2 = colnames(naive)[naive$assigned_lineage %in% names(cutree(acid_heatmap$tree_col, k=3)[cutree(acid_heatmap$tree_col, k=3)== 2])]
+)
+pdf('NMF/trace_acid_usages_to_naive.pdf')
+Cell_Highlight_Plot(seurat_object = naive, cells_highlight = acid_cells_list, highlight_color = c('red','blue','green'))
+Idents(naive) <- naive$assigned_lineage
+acid_lins_meta <- acid_lins
+names(acid_lins_meta) <- acid_lins_meta
+acid_lins_meta[acid_lins_meta %in% names(cutree(acid_heatmap$tree_col, k=3)[cutree(acid_heatmap$tree_col, k=3)== 1])] <- 'red'
+acid_lins_meta[acid_lins_meta %in% names(cutree(acid_heatmap$tree_col, k=3)[cutree(acid_heatmap$tree_col, k=3)== 3])] <- 'blue'
+acid_lins_meta[acid_lins_meta %in% names(cutree(acid_heatmap$tree_col, k=3)[cutree(acid_heatmap$tree_col, k=3)== 2])] <- 'green'
+Stacked_VlnPlot(subset(naive, idents = acid_lins), features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))][1:4],
+                colors_use = acid_lins_meta,
+             x_lab_rotate = T)
+dev.off()
+
+# Cisplatin
+cis_cells_list <- list(
+  Usage1_4_8 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 3])],
+  Usage6_4_8 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 4])],
+  Usage1 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 1])],
+  Usage6 = colnames(naive)[naive$assigned_lineage %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 2])]
+)
+pdf('NMF/trace_cis_usages_to_naive.pdf')
+Cell_Highlight_Plot(seurat_object = naive, cells_highlight = cis_cells_list, highlight_color = c('red','blue','green','orange'))
+Idents(naive) <- naive$assigned_lineage
+cis_lins_meta <- cis_lins
+names(cis_lins_meta) <- cis_lins_meta
+cis_lins_meta[cis_lins_meta %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 3])] <- 'red'
+cis_lins_meta[cis_lins_meta %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 4])] <- 'blue'
+cis_lins_meta[cis_lins_meta %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 1])] <- 'green'
+cis_lins_meta[cis_lins_meta %in% names(cutree(cis_heatmap$tree_col, k=4)[cutree(cis_heatmap$tree_col, k=4)== 2])] <- 'orange'
+Stacked_VlnPlot(subset(naive, idents = cis_lins), features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))][1:4],
+                colors_use = cis_lins_meta,
+             x_lab_rotate = T)
+dev.off()
+
+# Doxorubicin
+dox_cells_list <- list(
+  Usage1 = colnames(naive)[naive$assigned_lineage %in% names(cutree(dox_heatmap$tree_col, k=2)[cutree(dox_heatmap$tree_col, k=2)== 2])],
+  Usage2 = colnames(naive)[naive$assigned_lineage %in% names(cutree(dox_heatmap$tree_col, k=2)[cutree(dox_heatmap$tree_col, k=2)== 1])]
+)
+pdf('NMF/trace_dox_usages_to_naive.pdf')
+Cell_Highlight_Plot(seurat_object = naive, cells_highlight = dox_cells_list, highlight_color = c('red','blue'))
+Idents(naive) <- naive$assigned_lineage
+dox_lins_meta <- dox_lins
+names(dox_lins_meta) <- dox_lins_meta
+dox_lins_meta[dox_lins_meta %in% names(cutree(dox_heatmap$tree_col, k=2)[cutree(dox_heatmap$tree_col, k=2)== 2])] <- 'red'
+dox_lins_meta[dox_lins_meta %in% names(cutree(dox_heatmap$tree_col, k=2)[cutree(dox_heatmap$tree_col, k=2)== 1])] <- 'blue'
+
+Stacked_VlnPlot(subset(naive, idents = dox_lins), features = names(naive@meta.data)[grep('Usage',names(naive@meta.data))][1:4],
+                colors_use = dox_lins_meta,
+             x_lab_rotate = T)
+dev.off()
+```
+
+
+# Subset the all_data to naive, maintaining the NMF weightings
+```{r}
+
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to all_naive
+naive_all_sub <- subset(all_data, idents = 'naive')
+DimPlot(naive_all_sub)
+
+pdf('NMF/All_data_NMF_on_Naive.pdf',10,10)
+FeaturePlot_scCustom(naive_all_sub, features = names(naive_all_sub@meta.data)[grep('Usage',names(naive_all_sub@meta.data))], col = viridis(n = 10, option = "D"))
+dev.off()
+```
+
+# For each condition, take the largest res lins and do violin plots
+```{r}
+
+pdf('NMF/dab_top_clones_across_conds.pdf',20,20)
+Idents(all_data) <- all_data$assigned_lineage
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['dab']], decreasing = T)[1:10],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['dab']], decreasing = T)[11:20],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dab' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+dev.off()
+
+pdf('NMF/tram_top_clones_across_conds.pdf',20,20)
+Idents(all_data) <- all_data$assigned_lineage
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['tram']], decreasing = T)[1:10],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'tram' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['tram']], decreasing = T)[11:20],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'tram' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+dev.off()
+
+pdf('NMF/cocl2_top_clones_across_conds.pdf',20,20)
+Idents(all_data) <- all_data$assigned_lineage
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['cocl2']], decreasing = T)[1:10],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'cocl2' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['cocl2']], decreasing = T)[11:20],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'cocl2' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+dev.off()
+
+pdf('NMF/acid_top_clones_across_conds.pdf',20,20)
+Idents(all_data) <- all_data$assigned_lineage
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['acid']], decreasing = T)[1:10],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'acid' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['acid']], decreasing = T)[11:20],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'acid' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+dev.off()
+
+pdf('NMF/cis_top_clones_across_conds.pdf',20,20)
+Idents(all_data) <- all_data$assigned_lineage
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['cis']], decreasing = T)[1:10],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'cis' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['cis']], decreasing = T)[11:20],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'cis' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+dev.off()
+
+pdf('NMF/dox_top_clones_across_conds.pdf',20,20)
+Idents(all_data) <- all_data$assigned_lineage
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['dox']], decreasing = T)[1:10],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dox' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+Stacked_VlnPlot(subset(all_data, idents = clones_df[which(clones_df$naive > 3),][order(clones_df[which(clones_df$naive > 3),][['dox']], decreasing = T)[11:20],]$Lineage), features = names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))], colors_use = c('naive' = '#D3D3D3',
+             'acid' = '#F57F20',
+             'cocl2' = '#00AB50',
+             'dox' = '#00B1D9',
+             'tram' = '#EB81B4',
+             'cis' = '#BEA733',
+             'dox' = '#8B008B'),
+             x_lab_rotate = T,
+             split.by = 'OG_condition')
+dev.off()
+```
+
+# Do UCell embeddings of each treatment and loading and compare to the NMF loading
+```{r}
+# Do naive first 
+naive_topgenes_list <- as.list(naive_topgenes)
+names(naive_topgenes_list) <- names(naive@meta.data)[grep('Usage',names(naive@meta.data))]
+
+naive <- AddModuleScore_UCell(naive, features = naive_topgenes_list)
+naive_signature_names <- paste0(names(naive_topgenes_list), "_UCell")
+
+pdf('NMF/naive_UCell_usages.pdf')
+for (i in naive_signature_names){
+  print(FeaturePlot(naive, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do dab
+dab_topgenes_list <- as.list(dab_topgenes)
+names(dab_topgenes_list) <- names(dab@meta.data)[grep('Usage',names(dab@meta.data))]
+
+dab <- AddModuleScore_UCell(dab, features = dab_topgenes_list)
+dab_signature_names <- paste0(names(dab_topgenes_list), "_UCell")
+
+pdf('NMF/dab_UCell_usages.pdf')
+for (i in dab_signature_names){
+  print(FeaturePlot(dab, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do tram
+tram_topgenes_list <- as.list(tram_topgenes)
+names(tram_topgenes_list) <- names(tram@meta.data)[grep('Usage',names(tram@meta.data))]
+
+tram <- AddModuleScore_UCell(tram, features = tram_topgenes_list)
+tram_signature_names <- paste0(names(tram_topgenes_list), "_UCell")
+
+pdf('NMF/tram_UCell_usages.pdf')
+for (i in tram_signature_names){
+  print(FeaturePlot(tram, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do cocl2
+cocl2_topgenes_list <- as.list(cocl2_topgenes)
+names(cocl2_topgenes_list) <- names(cocl2@meta.data)[grep('Usage',names(cocl2@meta.data))]
+
+cocl2 <- AddModuleScore_UCell(cocl2, features = cocl2_topgenes_list)
+cocl2_signature_names <- paste0(names(cocl2_topgenes_list), "_UCell")
+
+pdf('NMF/cocl2_UCell_usages.pdf')
+for (i in cocl2_signature_names){
+  print(FeaturePlot(cocl2, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do acid
+acid_topgenes_list <- as.list(acid_topgenes)
+names(acid_topgenes_list) <- names(acid@meta.data)[grep('Usage',names(acid@meta.data))]
+
+acid <- AddModuleScore_UCell(acid, features = acid_topgenes_list)
+acid_signature_names <- paste0(names(acid_topgenes_list), "_UCell")
+
+pdf('NMF/acid_UCell_usages.pdf')
+for (i in acid_signature_names){
+  print(FeaturePlot(acid, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do cis
+cis_topgenes_list <- as.list(cis_topgenes)
+names(cis_topgenes_list) <- names(cis@meta.data)[grep('Usage',names(cis@meta.data))]
+
+cis <- AddModuleScore_UCell(cis, features = cis_topgenes_list)
+cis_signature_names <- paste0(names(cis_topgenes_list), "_UCell")
+
+pdf('NMF/cis_UCell_usages.pdf')
+for (i in cis_signature_names){
+  print(FeaturePlot(cis, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do dox
+dox_topgenes_list <- as.list(dox_topgenes)
+names(dox_topgenes_list) <- names(dox@meta.data)[grep('Usage',names(dox@meta.data))]
+
+dox <- AddModuleScore_UCell(dox, features = dox_topgenes_list)
+dox_signature_names <- paste0(names(dox_topgenes_list), "_UCell")
+
+pdf('NMF/dox_UCell_usages.pdf')
+for (i in dox_signature_names){
+  print(FeaturePlot(dox, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do all_data
+all_data_topgenes_list <- as.list(all_data_topgenes)
+names(all_data_topgenes_list) <- names(all_data@meta.data)[grep('Usage',names(all_data@meta.data))]
+
+all_data <- AddModuleScore_UCell(all_data, features = all_data_topgenes_list)
+all_data_signature_names <- paste0(names(all_data_topgenes_list), "_UCell")
+
+pdf('NMF/all_data_UCell_usages.pdf')
+for (i in all_data_signature_names){
+  print(FeaturePlot(all_data, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+```
+
+# Do all of the end state UMAP states on the naive
+```{r}
+# Do dab first 
+naive_dab_topgenes_list <- as.list(dab_topgenes)
+names(naive_dab_topgenes_list) <- paste0('dab_',names(dab@meta.data)[grep('_UCell',names(dab@meta.data))])
+
+naive <- AddModuleScore_UCell(naive, features = naive_dab_topgenes_list, name = '')
+naive_signature_names_dab <- names(naive_dab_topgenes_list)
+
+pdf('NMF/naive_UCell_dab_usages.pdf')
+for (i in naive_signature_names_dab){
+  print(FeaturePlot(naive, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do tram first 
+naive_tram_topgenes_list <- as.list(tram_topgenes)
+names(naive_tram_topgenes_list) <- paste0('tram_',names(tram@meta.data)[grep('_UCell',names(tram@meta.data))])
+
+naive <- AddModuleScore_UCell(naive, features = naive_tram_topgenes_list, name = '')
+naive_signature_names_tram <- names(naive_tram_topgenes_list)
+
+pdf('NMF/naive_UCell_tram_usages.pdf')
+for (i in naive_signature_names_tram){
+  print(FeaturePlot(naive, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do cocl2 first 
+naive_cocl2_topgenes_list <- as.list(cocl2_topgenes)
+names(naive_cocl2_topgenes_list) <- paste0('cocl2_',names(cocl2@meta.data)[grep('_UCell',names(cocl2@meta.data))])
+
+naive <- AddModuleScore_UCell(naive, features = naive_cocl2_topgenes_list, name = '')
+naive_signature_names_cocl2 <- names(naive_cocl2_topgenes_list)
+
+pdf('NMF/naive_UCell_cocl2_usages.pdf')
+for (i in naive_signature_names_cocl2){
+  print(FeaturePlot(naive, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do tram first 
+naive_tram_topgenes_list <- as.list(tram_topgenes)
+names(naive_tram_topgenes_list) <- paste0('tram_',names(tram@meta.data)[grep('_UCell',names(tram@meta.data))])
+
+naive <- AddModuleScore_UCell(naive, features = naive_tram_topgenes_list, name = '')
+naive_signature_names_tram <- names(naive_tram_topgenes_list)
+
+pdf('NMF/naive_UCell_tram_usages.pdf')
+for (i in naive_signature_names_tram){
+  print(FeaturePlot(naive, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do cis first 
+naive_cis_topgenes_list <- as.list(cis_topgenes)
+names(naive_cis_topgenes_list) <- paste0('cis_',names(cis@meta.data)[grep('_UCell',names(cis@meta.data))])
+
+naive <- AddModuleScore_UCell(naive, features = naive_cis_topgenes_list, name = '')
+naive_signature_names_cis <- names(naive_cis_topgenes_list)
+
+pdf('NMF/naive_UCell_cis_usages.pdf')
+for (i in naive_signature_names_cis){
+  print(FeaturePlot(naive, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+
+# Do dox first 
+naive_dox_topgenes_list <- as.list(dox_topgenes)
+names(naive_dox_topgenes_list) <- paste0('dox_',names(dox@meta.data)[grep('_UCell',names(dox@meta.data))])
+
+naive <- AddModuleScore_UCell(naive, features = naive_dox_topgenes_list, name = '')
+naive_signature_names_dox <- names(naive_dox_topgenes_list)
+
+pdf('NMF/naive_UCell_dox_usages.pdf')
+for (i in naive_signature_names_dox){
+  print(FeaturePlot(naive, features = i, order = T) + scale_colour_gradientn(colors = inferno(n = 10)) +  DarkTheme())
+}
+dev.off()
+```
+

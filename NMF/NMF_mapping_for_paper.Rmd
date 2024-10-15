@@ -1,0 +1,1136 @@
+---
+title: "NMF_mapping_quartile"
+output: html_document
+date: "2024-05-14"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(reticulate)
+library(SeuratDisk)
+library(scCustomize)
+library(viridis)
+library(clusterProfiler)
+library(pheatmap)
+library(UCell)
+library(cowplot)
+library(corrplot)
+library(fgsea)
+`%nin%` = Negate(`%in%`)
+num_lin = 100
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B')
+zscore <- function(x){
+  (x-mean(x))/sd(x)
+}
+```
+
+# Load in the seurat objects
+```{r, include = F}
+naive <- LoadH5Seurat('NMF/naive.h5Seurat')
+dab <- LoadH5Seurat('NMF/dab.h5Seurat')
+tram <- LoadH5Seurat('NMF/tram.h5Seurat')
+cocl2 <- LoadH5Seurat('NMF/cocl2.h5Seurat')
+acid <- LoadH5Seurat('NMF/acid.h5Seurat')
+cis <- LoadH5Seurat('NMF/cis.h5Seurat')
+dox <- LoadH5Seurat('NMF/dox.h5Seurat')
+all_data <- LoadH5Seurat('NMF/all_data.h5Seurat')
+```
+
+# Load in the usages
+```{r, include = F}
+naive_nmf <- read.delim('NMF/naive/naive_cNMF/naive_cNMF.usages.k_12.dt_0_175.consensus.txt')
+dab_nmf <- read.delim('NMF/dab/dab_cNMF/dab_cNMF.usages.k_13.dt_0_25.consensus.txt')
+tram_nmf <- read.delim('NMF/tram/tram_cNMF/tram_cNMF.usages.k_8.dt_0_2.consensus.txt')
+cocl2_nmf <- read.delim('NMF/cocl2/cocl2_cNMF/cocl2_cNMF.usages.k_12.dt_0_2.consensus.txt')
+acid_nmf <- read.delim('NMF/acid/acid_cNMF/acid_cNMF.usages.k_8.dt_0_05.consensus.txt')
+cis_nmf <- read.delim('NMF/cis/cis_cNMF/cis_cNMF.usages.k_11.dt_0_2.consensus.txt')
+dox_nmf <- read.delim('NMF/dox/dox_cNMF/dox_cNMF.usages.k_11.dt_0_275.consensus.txt')
+all_data_nmf <- read.delim('NMF/all_data/all_data_cNMF/all_data_cNMF.usages.k_9.dt_0_05.consensus.txt')
+```
+
+# Add the nmf as metadata
+```{r, include = F}
+for (i in 2:ncol(naive_nmf)){
+  naive[[paste0('Usage',i-1)]]<- naive_nmf[,i]
+}
+for (i in 2:ncol(dab_nmf)){
+  dab[[paste0('Usage',i-1)]]<- dab_nmf[,i]
+}
+for (i in 2:ncol(tram_nmf)){
+  tram[[paste0('Usage',i-1)]]<- tram_nmf[,i]
+}
+for (i in 2:ncol(cocl2_nmf)){
+  cocl2[[paste0('Usage',i-1)]]<- cocl2_nmf[,i]
+}
+for (i in 2:ncol(acid_nmf)){
+  acid[[paste0('Usage',i-1)]]<- acid_nmf[,i]
+}
+for (i in 2:ncol(cis_nmf)){
+  cis[[paste0('Usage',i-1)]]<- cis_nmf[,i]
+}
+for (i in 2:ncol(dox_nmf)){
+  dox[[paste0('Usage',i-1)]]<- dox_nmf[,i]
+}
+for (i in 2:ncol(all_data_nmf)){
+  all_data[[paste0('Usage',i-1)]]<- all_data_nmf[,i]
+}
+```
+
+# Make a clones dataframe 
+```{r}
+clones_df <- data.frame(matrix(ncol = 1, nrow = 1))
+colnames(clones_df) <- 'Lineage'
+
+for (i in unique(all_data$OG_condition)){
+  temp_df <- as.data.frame(table(all_data$assigned_lineage[all_data$OG_condition == i]))
+  colnames(temp_df) <- c('Lineage', i)
+  clones_df <-merge(clones_df, temp_df, all = T)
+  rm(temp_df)
+}
+clones_df <- clones_df[-which(clones_df$Lineage == 'NA'),]
+```
+
+# Dabrafenib
+
+## Hierarchical clustering
+```{r}
+# Use top clones with at least 2 cells both before and after treatment, using only the first 11 usages that actually contained information
+dab_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['dab']], decreasing = T),]$Lineage[1:num_lin]
+
+# Build dataframe of usages per clone from dabrafenib resistant data - top quartile
+dab_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:11){
+  dab_lin_usages_df[[paste0('Usage',i)]] <- sapply(dab_lins, function(x) quantile(dab[[paste0('Usage',i)]][dab$assigned_lineage == x,],.75))
+  
+}
+rownames(dab_lin_usages_df) <- dab_lins  
+dab_heatmap_col <- pheatmap(t(dab_lin_usages_df), scale = 'column', main = 'Dabrafenib - column normalized', color =  brewer.pal(n = 75, name = "OrRd"))
+dab_heatmap_row <- pheatmap(t(dab_lin_usages_df), scale = 'row', main = 'Dabrafenib - row normalized', color =  brewer.pal(n = 75, name = "OrRd"))
+dab_heatmap <- pheatmap(t(dab_lin_usages_df), scale = 'none', main = 'Dabrafenib - no normalized', color =  brewer.pal(n = 75, name = "OrRd"))
+
+# Build dataframe of usages per clone from naive data - top quartile
+dab_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  dab_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(dab_lins, function(x) quantile(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,],.75))
+  
+}
+rownames(dab_lin_naive_usages_df) <- dab_lins 
+naive_heatmap_dab_lins_col <- pheatmap(t(dab_lin_naive_usages_df), scale = 'column', main = 'naive cells with dabrafenib lineages - column norm', color =  brewer.pal(n = 75, name = "OrRd"))
+naive_heatmap_dab_lins_row <- pheatmap(t(dab_lin_naive_usages_df), scale = 'row', main = 'naive cells with dabrafenib lineages - row norm', color =  brewer.pal(n = 75, name = "OrRd"))
+naive_heatmap_dab_lins <- pheatmap(t(dab_lin_naive_usages_df), scale = 'none', main = 'naive cells with dabrafenib lineages - no norm', color =  brewer.pal(n = 75, name = "OrRd"))
+
+# Output the heatmaps
+pdf('NMF/NMF_mapping_for_paper/dab_usage_heatmaps.pdf')
+print(dab_heatmap_col)
+grid::grid.newpage()
+print(dab_heatmap_row)
+grid::grid.newpage()
+print(dab_heatmap)
+grid::grid.newpage()
+print(naive_heatmap_dab_lins_col)
+grid::grid.newpage()
+print(naive_heatmap_dab_lins_row)
+grid::grid.newpage()
+print(naive_heatmap_dab_lins)
+dev.off()
+```
+
+## Do linear regression on z scored data
+```{r}
+# Make a list of dabrafenib usages based on top dab resistant lins
+dab_usage_list <- list()
+for(i in dab_lins){
+  dab_usage_list[[i]] <- sapply(colnames(dab@meta.data)[grep('Usage', colnames(dab@meta.data))][1:11], function(x) quantile(dab[[x]][dab$assigned_lineage == i,],.75)[[1]])
+}
+dab_usage_df <- do.call(rbind.data.frame, dab_usage_list)
+colnames(dab_usage_df) <- colnames(dab@meta.data)[grep('Usage', colnames(dab@meta.data))][1:11]
+rownames(dab_usage_df) <- dab_lins
+dab_zscores <- apply(dab_usage_df,2,zscore)
+
+# Make a list of naive usages based on top dab resistant lins
+dab_lins_naive_usages_list <-list()
+for(i in dab_lins){
+  dab_lins_naive_usages_list[[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$assigned_lineage == i,],.75)[[1]])
+}
+dab_lins_naive_usage_df <- do.call(rbind.data.frame, dab_lins_naive_usages_list)
+colnames(dab_lins_naive_usage_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+rownames(dab_lins_naive_usage_df) <- dab_lins
+dab_lins_naive_usage_zscores <- apply(dab_lins_naive_usage_df,2,zscore) 
+
+# do the linear regressions, one dabrafenib usage at a time
+dab_regression_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(dab_regression_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+dab_regression_list <- list()
+for (z in 1:11){
+  dab_regression_list[[z]] <- lm(as.matrix(dab_zscores[,z])~ as.matrix(dab_lins_naive_usage_zscores) + 0)
+  dab_regression_df[z,] <- as.numeric(dab_regression_list[[z]]$coefficients)
+}
+rownames(dab_regression_df) <- colnames(dab@meta.data)[grep('Usage', colnames(dab@meta.data))][1:11]
+
+# Output the heatmap of the regressions of dab vs naive
+pdf('NMF/NMF_mapping_for_paper/dab_usage_regression_heatmap.pdf')
+pheatmap(t(dab_regression_df), color = cividis(13), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.3,0.3,.05))
+dev.off()
+
+#Output heatmaps of built in significance of regression
+dab_regression_p_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(dab_regression_p_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+for (z in 1:11){
+  dab_regression_p_df[z,] <- as.numeric(summary(dab_regression_list[[z]])$coefficients[,4])
+}
+rownames(dab_regression_p_df) <- colnames(dab@meta.data)[grep('Usage', colnames(dab@meta.data))][1:11]
+
+pdf('NMF/NMF_mapping_for_paper/dab_usage_regression_p_heatmap.pdf')
+pheatmap(-log10(t(dab_regression_p_df)), color =  brewer.pal(n = 75, name = "Purples"), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(0,1.6,.2))
+dev.off()
+```
+
+## Look at spefific markers in dabrafenib
+```{r}
+naive_top_genes <- read.delim('NMF/naive/naive_topgenes.txt')
+dab_top_genes <- read.delim('NMF/dab/dab_topgenes.txt')
+
+# Try scattering the average clonal NMF of 1 and 2 vs 3 and 4
+
+dab_lins_naive_usage_comb_df <- dab_lins_naive_usage_df
+dab_lins_naive_usage_comb_df$Usage1_2 <- (dab_lin_naive_usages_df$Usage1+dab_lin_naive_usages_df$Usage2)/2
+dab_lins_naive_usage_comb_df$Usage3_4 <- (dab_lin_naive_usages_df$Usage3+dab_lin_naive_usages_df$Usage4)/2
+dab_lins_naive_usage_comb_df$Usage_status <- 'Usage1_2'
+dab_lins_naive_usage_comb_df$Usage_status[dab_lins_naive_usage_comb_df$Usage1_2 - dab_lins_naive_usage_comb_df$Usage3_4 < 0] <- 'Usage3_4'
+
+pdf('NMF/NMF_mapping_for_paper/Naive_Usage1and2_vs_Usage3and4_scatter.pdf')
+ggplot(dab_lins_naive_usage_comb_df, aes(x = Usage1_2, y = Usage3_4, color = Usage_status)) + geom_point(size = 4) + geom_abline(slope=1, intercept=0, color = 'red') + xlim(0,1) + ylim(0,1) + theme(aspect.ratio=1) + ggtitle('Usage1_2 vs Usage3_4 average per clone') + scale_color_manual(values = c('blue','red'))
+dev.off()
+
+# Assign cells to different usage groups 
+naive$Usage1_2_vs_Usage3_4 <- NA
+naive$Usage1_2_vs_Usage3_4[naive$assigned_lineage %in% (rownames(dab_lins_naive_usage_comb_df)[dab_lins_naive_usage_comb_df$Usage1_2 - dab_lins_naive_usage_comb_df$Usage3_4 > 0])] <- 'Usage1_2'
+naive$Usage1_2_vs_Usage3_4[naive$assigned_lineage %in% (rownames(dab_lins_naive_usage_comb_df)[dab_lins_naive_usage_comb_df$Usage1_2 - dab_lins_naive_usage_comb_df$Usage3_4 < 0])] <- 'Usage3_4'
+DimPlot(naive,cells.highlight = list(Usage3_4 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage3_4'], Usage1_2 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage1_2']), cols.highlight = c('red','blue'), sizes.highlight = 3, shuffle = T)
+
+# Find markers
+Idents(naive) <- naive$Usage1_2_vs_Usage3_4
+naive_usage_comp_sig_markers <- FindMarkers(naive, 'Usage3_4')
+naive_usage_comp_sig_markers$genes <- rownames(naive_usage_comp_sig_markers)
+
+levs <- c('Usage1_2','Usage3_4')
+Idents(naive) <- factor(x = naive$Usage1_2_vs_Usage3_4, levels = levs)
+
+DimPlot(naive,cells.highlight = list(Usage3_4 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage3_4']), cols.highlight = c('red'), sizes.highlight = 3, pt.size = 2)
+DimPlot(naive,cells.highlight = list(Usage1_2 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage1_2']), cols.highlight = c('blue'), sizes.highlight = 2, pt.size = 2)
+
+# save plots
+pdf('NMF/NMF_mapping_for_paper/Naive_Usage1and2_vs_Usage3and4_umap_and_genes.pdf')
+DimPlot(naive,cells.highlight = list(Usage3_4 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage3_4'], Usage1_2 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage1_2']), cols.highlight = c('red','blue'), sizes.highlight = 3, shuffle = T, pt.size = 2)
+DimPlot(naive,cells.highlight = list(Usage3_4 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage3_4']), cols.highlight = c('red'), sizes.highlight = 4, pt.size = 2)
+DimPlot(naive,cells.highlight = list(Usage1_2 = colnames(naive)[naive$Usage1_2_vs_Usage3_4 == 'Usage1_2']), cols.highlight = c('blue'), sizes.highlight = 4, pt.size = 2)
+VlnPlot_scCustom(naive, c('MLANA','MITF','CD44', 'FN1','NT5E','EGFR'), idents = c('Usage1_2','Usage3_4'), colors_use = c('blue','red'), num_columns = 6, pt.size = 0.001)
+dev.off()
+
+# Assign cells to different usage groups 
+dab$Usage1_2_vs_Usage3_4 <- NA
+dab$Usage1_2_vs_Usage3_4[dab$assigned_lineage %in% (rownames(dab_lins_naive_usage_comb_df)[dab_lins_naive_usage_comb_df$Usage1_2 - dab_lins_naive_usage_comb_df$Usage3_4 > 0])] <- 'Usage1_2'
+dab$Usage1_2_vs_Usage3_4[dab$assigned_lineage %in% (rownames(dab_lins_naive_usage_comb_df)[dab_lins_naive_usage_comb_df$Usage1_2 - dab_lins_naive_usage_comb_df$Usage3_4 < 0])] <- 'Usage3_4'
+DimPlot(dab,cells.highlight = list(Usage3_4 = colnames(dab)[dab$Usage1_2_vs_Usage3_4 == 'Usage3_4'], Usage1_2 = colnames(dab)[dab$Usage1_2_vs_Usage3_4 == 'Usage1_2']), cols.highlight = c('red','blue'), sizes.highlight = 3, shuffle = T)
+
+# Find markers
+Idents(dab) <- dab$Usage1_2_vs_Usage3_4
+dab_usage_comp_sig_markers <- FindMarkers(dab, 'Usage3_4')
+dab_usage_comp_sig_markers$genes <- rownames(dab_usage_comp_sig_markers)
+
+levs <- c('Usage1_2','Usage3_4')
+Idents(dab) <- factor(x = dab$Usage1_2_vs_Usage3_4, levels = levs)
+
+# save plots
+pdf('NMF/NMF_mapping_for_paper/dab_Usage1and2_vs_Usage3and4_umap_and_genes.pdf')
+DimPlot(dab,cells.highlight = list(Usage3_4 = colnames(dab)[dab$Usage1_2_vs_Usage3_4 == 'Usage3_4'], Usage1_2 = colnames(dab)[dab$Usage1_2_vs_Usage3_4 == 'Usage1_2']), cols.highlight = c('red','blue'), sizes.highlight = 3, shuffle = T, pt.size = 2)
+DimPlot(dab,cells.highlight = list(Usage3_4 = colnames(dab)[dab$Usage1_2_vs_Usage3_4 == 'Usage3_4']), cols.highlight = c('red'), sizes.highlight = 4, pt.size = 2)
+DimPlot(dab,cells.highlight = list(Usage1_2 = colnames(dab)[dab$Usage1_2_vs_Usage3_4 == 'Usage1_2']), cols.highlight = c('blue'), sizes.highlight = 4, pt.size = 2)
+VlnPlot_scCustom(dab, c('Usage1','Usage2', 'Usage4','Usage10'), idents = c('Usage1_2','Usage3_4'), colors_use = c('blue','red'), num_columns = 4, pt.size = 0.001)
+VlnPlot_scCustom(dab, c('MT2A','COL1A1','NGFR','NFATC2'), idents = c('Usage1_2','Usage3_4'), colors_use = c('blue','red'), num_columns = 4, pt.size = 0.001)
+dev.off()
+
+# Do GSEA of dabrafenib usages
+
+# Load in the GO pathways downloaded from MSigDB
+human_gene_sets <- readLines('NMF/h.all.v2023.2.Hs.symbols.gmt.txt')
+human_gene_sets <- strsplit(human_gene_sets,'\t')
+
+Hs.H <- list()
+for(i in 1:length(human_gene_sets)){
+  Hs.H[[human_gene_sets[[i]][1]]] <- as.character(human_gene_sets[[i]][3:length(human_gene_sets[[i]])])
+}
+
+# Load in scores for GSEA
+dab_gep_scores <- read.delim('NMF/dab/dab_gep_scores.txt')
+
+dab_fgsea <- list()
+pdf('NMF/NMF_mapping_for_paper/GSEA_Plots_dab.pdf',10,10)
+for (j in 1:(ncol(dab_gep_scores)-1)){
+  temp_scores <- dab_gep_scores[,j+1]
+  names(temp_scores) <- dab_gep_scores[,1]
+  temp_scores <- temp_scores[!is.na(temp_scores)]
+  dab_fgsea[[paste0('Usage',j)]] <- fgsea(Hs.H, temp_scores, minSize=5, maxSize = 500)
+  print(ggplot(dab_fgsea[[paste0('Usage',j)]][!is.na(dab_fgsea[[paste0('Usage',j)]]$pval) & dab_fgsea[[paste0('Usage',j)]]$padj <= 0.05,], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=NES>0)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+  print(ggplot(dab_fgsea[[paste0('Usage',j)]][!is.na(dab_fgsea[[paste0('Usage',j)]]$pval),], aes(reorder(pathway, NES), NES)) +
+    geom_col(aes(fill=padj <= 0.05)) +
+    coord_flip() +
+    labs( y="Normalized Enrichment Score",
+         title=paste0("Hallmark pathways NES from GSEA - Usage",j)) + 
+    theme_minimal())
+}
+dev.off()
+
+# Make stacked barplot of number of cells from clones at each timepoint
+conds <- c(rep('non-stressed',3), rep('dabrafenib',3))
+#conds <- factor(conds, levels= c('non-stressed','dabrafenib'))
+class <- rep(c('Usage1_2','Usage3_4','Other_clones'),2)
+pcnt_cells <- c(table(naive$Usage1_2_vs_Usage3_4, useNA = 'always')/length(naive$Usage1_2_vs_Usage3_4),table(dab$Usage1_2_vs_Usage3_4, useNA = 'always')/length(dab$Usage1_2_vs_Usage3_4))
+barplot_df <- data.frame(conds,class,pcnt_cells)
+pdf('NMF/NMF_mapping_for_paper/barplots_naive_and_dab.pdf')
+ggplot(barplot_df, aes(fill=class, y=pcnt_cells, x=conds)) + 
+    geom_bar(position="fill", stat="identity") + scale_fill_manual(values = c(Usage1_2 = 'blue', Usage3_4 = 'red', Other_clones = 'grey')) +scale_x_discrete(limits = conds) +
+    ggtitle("Proportion of total cells")
+dev.off()
+```
+
+
+## Perform 100 simulations and compare - keep the endstate data constant and shuffle lineage labels on naive data
+```{r}
+list_dab_lins_naive_usages_list_rand <- list() # List of simulated naive usages using dab resistant lins
+list_dab_lins_naive_usage_df_rand <- list() # List of simulated naive usages using dab resistant lins converted to dataframe
+list_dab_regression_df_rand <- list() # list of regression dataframes
+list_dab_regression_list_rand <- list() # list of regression dataframes lists
+for (q in 1:100){
+  set.seed(q)
+  list_dab_lins_naive_usages_list_rand[[paste0('Simulation_',q)]] <- list()
+  temp_rand_lins <- naive$assigned_lineage
+  names(temp_rand_lins) <- sample(names(temp_rand_lins), replace = F)
+  naive$rand_lineage <- temp_rand_lins
+  for(i in dab_lins){ # get the top quartile data
+    list_dab_lins_naive_usages_list_rand[[paste0('Simulation_',q)]][[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$rand_lineage == i,],.75)[[1]])
+  }
+  temp_df <- do.call(rbind.data.frame, list_dab_lins_naive_usages_list_rand[[paste0('Simulation_',q)]])
+  list_dab_lins_naive_usage_df_rand[[paste0('Simulation_',q)]] <- apply(temp_df,2,zscore) # zscore all clones for each usage
+  colnames(list_dab_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  rownames(list_dab_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- dab_lins
+
+  # do the linear regressions, one dabrafenib usage at a time
+  list_dab_regression_df_rand[[paste0('Simulation_',q)]] <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+  colnames(list_dab_regression_df_rand[[paste0('Simulation_',q)]] ) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  list_dab_regression_list_rand[[paste0('Simulation_',q)]]<- list()
+  for (z in 1:ncol(dab_zscores)){
+   list_dab_regression_list_rand[[paste0('Simulation_',q)]][[z]] <- lm(as.matrix(dab_usage_df[,z])~ as.matrix(list_dab_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) + 0)
+   list_dab_regression_df_rand[[paste0('Simulation_',q)]][z,] <- as.numeric(list_dab_regression_list_rand[[paste0('Simulation_',q)]][[z]]$coefficients)
+  }
+  rownames(list_dab_regression_df_rand[[paste0('Simulation_',q)]]) <- colnames(dab@meta.data)[grep('Usage', colnames(dab@meta.data))][1:11]
+  #pheatmap(t(list_dab_regression_df_rand[[paste0('Simulation_',q)]]), color = mako(10), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.1,0.3,.05))
+}
+
+# Get all of the simulated values
+dab_sim_vals <- list()
+for( i in colnames(dab@meta.data)[grep('Usage', colnames(dab@meta.data))][1:11]){
+  for (j in colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]){
+    dab_sim_vals[[paste0('Dab_',i,'_','Naive_',j)]] <- as.numeric(sapply(list_dab_regression_df_rand, function(x) x[i, j]))
+  }
+}
+
+# do Z testing to calculate p values
+dab_ztest_val <- c()
+pdf('NMF/NMF_mapping_for_paper/dabrafenib_regression_histograms_vs_permutations.pdf')
+# Compare the observed measurement to the distribution for each comparison
+for (i in names(dab_sim_vals)){
+  hist(dab_sim_vals[[i]], main = i, xlim=c(-.3,.3))
+  abline(v = dab_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]], col = 'red', lwd = 5)
+  dab_ztest_val <- c(dab_ztest_val,(dab_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]]- mean(dab_sim_vals[[i]]))/sd(dab_sim_vals[[i]]))
+}
+dev.off()
+names(dab_ztest_val) <- names(dab_sim_vals)
+
+dab_ztest_pval_df <- data.frame(dab_ztest_val)
+dab_ztest_pval_df$sig <- abs(dab_ztest_val) > 1.96 # 0.025% confidence, two sided
+write.csv(dab_ztest_pval_df, 'NMF/NMF_mapping_for_paper/dab_ztest_pvals.csv')
+```
+
+# Trametinib
+## Hierarchical clustering
+```{r}
+# Use top clones with at least 2 cells both before and after treatment, using only the first 8 usages that actually contained information
+tram_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['tram']], decreasing = T),]$Lineage[1:num_lin]
+
+# Build dataframe of usages per clone from trametinib resistant data - top quartile
+tram_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:8){
+  tram_lin_usages_df[[paste0('Usage',i)]] <- sapply(tram_lins, function(x) quantile(tram[[paste0('Usage',i)]][tram$assigned_lineage == x,],.75))
+}
+rownames(tram_lin_usages_df) <- tram_lins  
+tram_heatmap_col <- pheatmap(t(tram_lin_usages_df), scale = 'column', main = 'trametinib - column normalized', cutree_cols = 4)
+tram_heatmap_row <- pheatmap(t(tram_lin_usages_df), scale = 'row', main = 'trametinib - row normalized', cutree_cols = 4)
+tram_heatmap <- pheatmap(t(tram_lin_usages_df), scale = 'none', main = 'trametinib - no normalized', cutree_cols = 3)
+
+# Build dataframe of usages per clone from naive data - top quartile
+tram_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  tram_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(tram_lins, function(x) quantile(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,],.75))
+  
+}
+rownames(tram_lin_naive_usages_df) <- tram_lins 
+naive_heatmap_tram_lins_col <- pheatmap(t(tram_lin_naive_usages_df), scale = 'column', main = 'naive cells with trametinib lineages - column norm')
+naive_heatmap_tram_lins_row <- pheatmap(t(tram_lin_naive_usages_df), scale = 'row', main = 'naive cells with trametinib lineages - row norm')
+naive_heatmap_tram_lins <- pheatmap(t(tram_lin_naive_usages_df), scale = 'none', main = 'naive cells with trametinib lineages - no norm')
+
+# Output the heatmaps
+pdf('NMF/NMF_mapping_for_paper/tram_usage_heatmaps.pdf')
+print(tram_heatmap_col)
+grid::grid.newpage()
+print(tram_heatmap_row)
+grid::grid.newpage()
+print(tram_heatmap)
+grid::grid.newpage()
+print(naive_heatmap_tram_lins_col)
+grid::grid.newpage()
+print(naive_heatmap_tram_lins_row)
+grid::grid.newpage()
+print(naive_heatmap_tram_lins)
+dev.off()
+```
+
+## Do linear regression on z scored data
+```{r}
+# Make a list of trametinib usages based on top tram resistant lins
+tram_usage_list <- list()
+for(i in tram_lins){
+  tram_usage_list[[i]] <- sapply(colnames(tram@meta.data)[grep('Usage', colnames(tram@meta.data))][1:8], function(x) quantile(tram[[x]][tram$assigned_lineage == i,],.75)[[1]])
+}
+tram_usage_df <- do.call(rbind.data.frame, tram_usage_list)
+colnames(tram_usage_df) <- colnames(tram@meta.data)[grep('Usage', colnames(tram@meta.data))][1:8]
+rownames(tram_usage_df) <- tram_lins
+tram_zscores <- apply(tram_usage_df,2,zscore)
+
+# Make a list of naive usages based on top tram resistant lins
+tram_lins_naive_usages_list <-list()
+for(i in tram_lins){
+  tram_lins_naive_usages_list[[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$assigned_lineage == i,],.75)[[1]])
+}
+tram_lins_naive_usage_df <- do.call(rbind.data.frame, tram_lins_naive_usages_list)
+colnames(tram_lins_naive_usage_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+rownames(tram_lins_naive_usage_df) <- tram_lins
+tram_lins_naive_usage_zscores <- apply(tram_lins_naive_usage_df,2,zscore) 
+
+# do the linear regressions, one trametinib usage at a time
+tram_regression_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(tram_regression_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+tram_regression_list <- list()
+for (z in 1:8){
+  tram_regression_list[[z]] <- lm(as.matrix(tram_zscores[,z])~ as.matrix(tram_lins_naive_usage_zscores) + 0)
+  tram_regression_df[z,] <- as.numeric(tram_regression_list[[z]]$coefficients)
+}
+rownames(tram_regression_df) <- colnames(tram@meta.data)[grep('Usage', colnames(tram@meta.data))][1:8]
+
+# Output the heatmap of the regressions of tram vs naive
+pdf('NMF/NMF_mapping_for_paper/tram_usage_regression_heatmap.pdf')
+pheatmap(t(tram_regression_df), color = cividis(13), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.3,0.3,.05))
+dev.off()
+
+#Output heatmaps of built in significance of regression
+tram_regression_p_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(tram_regression_p_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+for (z in 1:8){
+  tram_regression_p_df[z,] <- as.numeric(summary(tram_regression_list[[z]])$coefficients[,4])
+}
+rownames(tram_regression_p_df) <- colnames(tram@meta.data)[grep('Usage', colnames(tram@meta.data))][1:8]
+
+pdf('NMF/NMF_mapping_for_paper/tram_usage_regression_p_heatmap.pdf')
+pheatmap(-log10(t(tram_regression_p_df)), color =  brewer.pal(n = 75, name = "Purples"), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(0,1.6,.2))
+dev.off()
+
+```
+
+## Perform 100 simulations and compare - keep the endstate data constant and shuffle lineage labels on naive data
+```{r}
+list_tram_lins_naive_usages_list_rand <- list() # List of simulated naive usages using tram resistant lins
+list_tram_lins_naive_usage_df_rand <- list() # List of simulated naive usages using tram resistant lins converted to dataframe
+list_tram_regression_df_rand <- list() # list of regression dataframes
+list_tram_regression_list_rand <- list() # list of regression dataframes lists
+for (q in 1:100){
+  set.seed(q)
+  list_tram_lins_naive_usages_list_rand[[paste0('Simulation_',q)]] <- list()
+  temp_rand_lins <- naive$assigned_lineage
+  names(temp_rand_lins) <- sample(names(temp_rand_lins), replace = F)
+  naive$rand_lineage <- temp_rand_lins
+  for(i in tram_lins){ # get the top quartile data
+    list_tram_lins_naive_usages_list_rand[[paste0('Simulation_',q)]][[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$rand_lineage == i,],.75)[[1]])
+  }
+  temp_df <- do.call(rbind.data.frame, list_tram_lins_naive_usages_list_rand[[paste0('Simulation_',q)]])
+  list_tram_lins_naive_usage_df_rand[[paste0('Simulation_',q)]] <- apply(temp_df,2,zscore) # zscore all clones for each usage
+  colnames(list_tram_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  rownames(list_tram_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- tram_lins
+
+  # do the linear regressions, one trametinib usage at a time
+  list_tram_regression_df_rand[[paste0('Simulation_',q)]] <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+  colnames(list_tram_regression_df_rand[[paste0('Simulation_',q)]] ) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  list_tram_regression_list_rand[[paste0('Simulation_',q)]]<- list()
+  for (z in 1:ncol(tram_zscores)){
+   list_tram_regression_list_rand[[paste0('Simulation_',q)]][[z]] <- lm(as.matrix(tram_usage_df[,z])~ as.matrix(list_tram_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) + 0)
+   list_tram_regression_df_rand[[paste0('Simulation_',q)]][z,] <- as.numeric(list_tram_regression_list_rand[[paste0('Simulation_',q)]][[z]]$coefficients)
+  }
+  rownames(list_tram_regression_df_rand[[paste0('Simulation_',q)]]) <- colnames(tram@meta.data)[grep('Usage', colnames(tram@meta.data))][1:8]
+  #pheatmap(t(list_tram_regression_df_rand[[paste0('Simulation_',q)]]), color = mako(10), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.1,0.3,.05))
+}
+
+# Get all of the simulated values
+tram_sim_vals <- list()
+for( i in colnames(tram@meta.data)[grep('Usage', colnames(tram@meta.data))][1:8]){
+  for (j in colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]){
+    tram_sim_vals[[paste0('tram_',i,'_','Naive_',j)]] <- as.numeric(sapply(list_tram_regression_df_rand, function(x) x[i, j]))
+  }
+}
+
+# do Z testing to calculate p values
+tram_ztest_val <- c()
+pdf('NMF/NMF_mapping_for_paper/trametinib_regression_histograms_vs_permutations.pdf')
+# Compare the observed measurement to the distribution for each comparison
+for (i in names(tram_sim_vals)){
+  hist(tram_sim_vals[[i]], main = i, xlim=c(-.3,.3))
+  abline(v = tram_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]], col = 'red', lwd = 5)
+  tram_ztest_val <- c(tram_ztest_val,(tram_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]]- mean(tram_sim_vals[[i]]))/sd(tram_sim_vals[[i]]))
+}
+dev.off()
+names(tram_ztest_val) <- names(tram_sim_vals)
+
+tram_ztest_pval_df <- data.frame(tram_ztest_val)
+tram_ztest_pval_df$sig <- abs(tram_ztest_val) > 1.96 # 0.025% confidence, two sided
+write.csv(tram_ztest_pval_df, 'NMF/NMF_mapping_for_paper/tram_ztest_pvals.csv')
+```
+
+# CoCl2
+## Hierarchical clustering
+```{r}
+# Use top clones with at least 2 cells both before and after treatment, using only the first 8 usages that actually contained information
+cocl2_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['cocl2']], decreasing = T),]$Lineage[1:num_lin]
+
+# Build dataframe of usages per clone from CoCl2 resistant data - top quartile
+cocl2_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:7){
+  cocl2_lin_usages_df[[paste0('Usage',i)]] <- sapply(cocl2_lins, function(x) quantile(cocl2[[paste0('Usage',i)]][cocl2$assigned_lineage == x,],.75))
+}
+rownames(cocl2_lin_usages_df) <- cocl2_lins  
+cocl2_heatmap_col <- pheatmap(t(cocl2_lin_usages_df), scale = 'column', main = 'CoCl2 - column normalized', cutree_cols = 4)
+cocl2_heatmap_row <- pheatmap(t(cocl2_lin_usages_df), scale = 'row', main = 'CoCl2 - row normalized', cutree_cols = 4)
+cocl2_heatmap <- pheatmap(t(cocl2_lin_usages_df), scale = 'none', main = 'CoCl2 - no normalized', cutree_cols = 3)
+
+# Build dataframe of usages per clone from naive data - top quartile
+cocl2_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  cocl2_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(cocl2_lins, function(x) quantile(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,],.75))
+  
+}
+rownames(cocl2_lin_naive_usages_df) <- cocl2_lins 
+naive_heatmap_cocl2_lins_col <- pheatmap(t(cocl2_lin_naive_usages_df), scale = 'column', main = 'naive cells with CoCl2 lineages - column norm')
+naive_heatmap_cocl2_lins_row <- pheatmap(t(cocl2_lin_naive_usages_df), scale = 'row', main = 'naive cells with CoCl2 lineages - row norm')
+naive_heatmap_cocl2_lins <- pheatmap(t(cocl2_lin_naive_usages_df), scale = 'none', main = 'naive cells with CoCl2 lineages - no norm')
+
+# Output the heatmaps
+pdf('NMF/NMF_mapping_for_paper/cocl2_usage_heatmaps.pdf')
+print(cocl2_heatmap_col)
+grid::grid.newpage()
+print(cocl2_heatmap_row)
+grid::grid.newpage()
+print(cocl2_heatmap)
+grid::grid.newpage()
+print(naive_heatmap_cocl2_lins_col)
+grid::grid.newpage()
+print(naive_heatmap_cocl2_lins_row)
+grid::grid.newpage()
+print(naive_heatmap_cocl2_lins)
+dev.off()
+```
+
+## Do linear regression on z scored data
+```{r}
+# Make a list of CoCl2 usages based on top cocl2 resistant lins
+cocl2_usage_list <- list()
+for(i in cocl2_lins){
+  cocl2_usage_list[[i]] <- sapply(colnames(cocl2@meta.data)[grep('Usage', colnames(cocl2@meta.data))][1:7], function(x) quantile(cocl2[[x]][cocl2$assigned_lineage == i,],.75)[[1]])
+}
+cocl2_usage_df <- do.call(rbind.data.frame, cocl2_usage_list)
+colnames(cocl2_usage_df) <- colnames(cocl2@meta.data)[grep('Usage', colnames(cocl2@meta.data))][1:7]
+rownames(cocl2_usage_df) <- cocl2_lins
+cocl2_zscores <- apply(cocl2_usage_df,2,zscore)
+
+# Make a list of naive usages based on top cocl2 resistant lins
+cocl2_lins_naive_usages_list <-list()
+for(i in cocl2_lins){
+  cocl2_lins_naive_usages_list[[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$assigned_lineage == i,],.75)[[1]])
+}
+cocl2_lins_naive_usage_df <- do.call(rbind.data.frame, cocl2_lins_naive_usages_list)
+colnames(cocl2_lins_naive_usage_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+rownames(cocl2_lins_naive_usage_df) <- cocl2_lins
+cocl2_lins_naive_usage_zscores <- apply(cocl2_lins_naive_usage_df,2,zscore) 
+
+# do the linear regressions, one CoCl2 usage at a time
+cocl2_regression_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(cocl2_regression_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+cocl2_regression_list <- list()
+for (z in 1:7){
+  cocl2_regression_list[[z]] <- lm(as.matrix(cocl2_zscores[,z])~ as.matrix(cocl2_lins_naive_usage_zscores) + 0)
+  cocl2_regression_df[z,] <- as.numeric(cocl2_regression_list[[z]]$coefficients)
+}
+rownames(cocl2_regression_df) <- colnames(cocl2@meta.data)[grep('Usage', colnames(cocl2@meta.data))][1:7]
+
+# Output the heatmap of the regressions of cocl2 vs naive
+pdf('NMF/NMF_mapping_for_paper/cocl2_usage_regression_heatmap.pdf')
+pheatmap(t(cocl2_regression_df), color = cividis(65), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.3,0.3,.01))
+dev.off()
+
+#Output heatmaps of built in significance of regression
+cocl2_regression_p_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(cocl2_regression_p_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+for (z in 1:7){
+  cocl2_regression_p_df[z,] <- as.numeric(summary(cocl2_regression_list[[z]])$coefficients[,4])
+}
+rownames(cocl2_regression_p_df) <- colnames(cocl2@meta.data)[grep('Usage', colnames(cocl2@meta.data))][1:7]
+
+pdf('NMF/NMF_mapping_for_paper/cocl2_usage_regression_p_heatmap.pdf')
+pheatmap(-log10(t(cocl2_regression_p_df)), color =  brewer.pal(n = 75, name = "Purples"), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(0,1.6,.2))
+dev.off()
+
+```
+
+## Perform 100 simulations and compare - keep the endstate data constant and shuffle lineage labels on naive data
+```{r}
+list_cocl2_lins_naive_usages_list_rand <- list() # List of simulated naive usages using cocl2 resistant lins
+list_cocl2_lins_naive_usage_df_rand <- list() # List of simulated naive usages using cocl2 resistant lins converted to dataframe
+list_cocl2_regression_df_rand <- list() # list of regression dataframes
+list_cocl2_regression_list_rand <- list() # list of regression dataframes lists
+for (q in 1:100){
+  set.seed(q)
+  list_cocl2_lins_naive_usages_list_rand[[paste0('Simulation_',q)]] <- list()
+  temp_rand_lins <- naive$assigned_lineage
+  names(temp_rand_lins) <- sample(names(temp_rand_lins), replace = F)
+  naive$rand_lineage <- temp_rand_lins
+  for(i in cocl2_lins){ # get the top quartile data
+    list_cocl2_lins_naive_usages_list_rand[[paste0('Simulation_',q)]][[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$rand_lineage == i,],.75)[[1]])
+  }
+  temp_df <- do.call(rbind.data.frame, list_cocl2_lins_naive_usages_list_rand[[paste0('Simulation_',q)]])
+  list_cocl2_lins_naive_usage_df_rand[[paste0('Simulation_',q)]] <- apply(temp_df,2,zscore) # zscore all clones for each usage
+  colnames(list_cocl2_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  rownames(list_cocl2_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- cocl2_lins
+
+  # do the linear regressions, one CoCl2 usage at a time
+  list_cocl2_regression_df_rand[[paste0('Simulation_',q)]] <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+  colnames(list_cocl2_regression_df_rand[[paste0('Simulation_',q)]] ) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  list_cocl2_regression_list_rand[[paste0('Simulation_',q)]]<- list()
+  for (z in 1:ncol(cocl2_zscores)){
+   list_cocl2_regression_list_rand[[paste0('Simulation_',q)]][[z]] <- lm(as.matrix(cocl2_usage_df[,z])~ as.matrix(list_cocl2_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) + 0)
+   list_cocl2_regression_df_rand[[paste0('Simulation_',q)]][z,] <- as.numeric(list_cocl2_regression_list_rand[[paste0('Simulation_',q)]][[z]]$coefficients)
+  }
+  rownames(list_cocl2_regression_df_rand[[paste0('Simulation_',q)]]) <- colnames(cocl2@meta.data)[grep('Usage', colnames(cocl2@meta.data))][1:7]
+  #pheatmap(t(list_cocl2_regression_df_rand[[paste0('Simulation_',q)]]), color = mako(10), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.1,0.3,.05))
+}
+
+# Get all of the simulated values
+cocl2_sim_vals <- list()
+for( i in colnames(cocl2@meta.data)[grep('Usage', colnames(cocl2@meta.data))][1:7]){
+  for (j in colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]){
+    cocl2_sim_vals[[paste0('cocl2_',i,'_','Naive_',j)]] <- as.numeric(sapply(list_cocl2_regression_df_rand, function(x) x[i, j]))
+  }
+}
+
+# do Z testing to calculate p values
+cocl2_ztest_val <- c()
+pdf('NMF/NMF_mapping_for_paper/CoCl2_regression_histograms_vs_permutations.pdf')
+# Compare the observed measurement to the distribution for each comparison
+for (i in names(cocl2_sim_vals)){
+  hist(cocl2_sim_vals[[i]], main = i, xlim=c(-.3,.3))
+  abline(v = cocl2_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]], col = 'red', lwd = 5)
+  cocl2_ztest_val <- c(cocl2_ztest_val,(cocl2_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]]- mean(cocl2_sim_vals[[i]]))/sd(cocl2_sim_vals[[i]]))
+}
+dev.off()
+names(cocl2_ztest_val) <- names(cocl2_sim_vals)
+
+cocl2_ztest_pval_df <- data.frame(cocl2_ztest_val)
+cocl2_ztest_pval_df$sig <- abs(cocl2_ztest_val) > 1.96 # 0.025% confidence, two sided
+write.csv(cocl2_ztest_pval_df, 'NMF/NMF_mapping_for_paper/cocl2_ztest_pvals.csv')
+```
+
+# Acid
+## Hierarchical clustering
+```{r}
+# Use top clones with at least 2 cells both before and after treatment, using only the first 8 usages that actually contained information
+acid_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['acid']], decreasing = T),]$Lineage[1:num_lin]
+
+# Build dataframe of usages per clone from Acid resistant data - top quartile
+acid_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:7){
+  acid_lin_usages_df[[paste0('Usage',i)]] <- sapply(acid_lins, function(x) quantile(acid[[paste0('Usage',i)]][acid$assigned_lineage == x,],.75))
+}
+rownames(acid_lin_usages_df) <- acid_lins  
+acid_heatmap_col <- pheatmap(t(acid_lin_usages_df), scale = 'column', main = 'Acid - column normalized', cutree_cols = 4)
+acid_heatmap_row <- pheatmap(t(acid_lin_usages_df), scale = 'row', main = 'Acid - row normalized', cutree_cols = 4)
+acid_heatmap <- pheatmap(t(acid_lin_usages_df), scale = 'none', main = 'Acid - no normalized', cutree_cols = 3)
+
+# Build dataframe of usages per clone from naive data - top quartile
+acid_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  acid_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(acid_lins, function(x) quantile(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,],.75))
+  
+}
+rownames(acid_lin_naive_usages_df) <- acid_lins 
+naive_heatmap_acid_lins_col <- pheatmap(t(acid_lin_naive_usages_df), scale = 'column', main = 'naive cells with Acid lineages - column norm')
+naive_heatmap_acid_lins_row <- pheatmap(t(acid_lin_naive_usages_df), scale = 'row', main = 'naive cells with Acid lineages - row norm')
+naive_heatmap_acid_lins <- pheatmap(t(acid_lin_naive_usages_df), scale = 'none', main = 'naive cells with Acid lineages - no norm')
+
+# Output the heatmaps
+pdf('NMF/NMF_mapping_for_paper/acid_usage_heatmaps.pdf')
+print(acid_heatmap_col)
+grid::grid.newpage()
+print(acid_heatmap_row)
+grid::grid.newpage()
+print(acid_heatmap)
+grid::grid.newpage()
+print(naive_heatmap_acid_lins_col)
+grid::grid.newpage()
+print(naive_heatmap_acid_lins_row)
+grid::grid.newpage()
+print(naive_heatmap_acid_lins)
+dev.off()
+```
+
+## Do linear regression on z scored data
+```{r}
+# Make a list of Acid usages based on top acid resistant lins
+acid_usage_list <- list()
+for(i in acid_lins){
+  acid_usage_list[[i]] <- sapply(colnames(acid@meta.data)[grep('Usage', colnames(acid@meta.data))][1:7], function(x) quantile(acid[[x]][acid$assigned_lineage == i,],.75)[[1]])
+}
+acid_usage_df <- do.call(rbind.data.frame, acid_usage_list)
+colnames(acid_usage_df) <- colnames(acid@meta.data)[grep('Usage', colnames(acid@meta.data))][1:7]
+rownames(acid_usage_df) <- acid_lins
+acid_zscores <- apply(acid_usage_df,2,zscore)
+
+# Make a list of naive usages based on top acid resistant lins
+acid_lins_naive_usages_list <-list()
+for(i in acid_lins){
+  acid_lins_naive_usages_list[[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$assigned_lineage == i,],.75)[[1]])
+}
+acid_lins_naive_usage_df <- do.call(rbind.data.frame, acid_lins_naive_usages_list)
+colnames(acid_lins_naive_usage_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+rownames(acid_lins_naive_usage_df) <- acid_lins
+acid_lins_naive_usage_zscores <- apply(acid_lins_naive_usage_df,2,zscore) 
+
+# do the linear regressions, one Acid usage at a time
+acid_regression_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(acid_regression_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+acid_regression_list <- list()
+for (z in 1:7){
+  acid_regression_list[[z]] <- lm(as.matrix(acid_zscores[,z])~ as.matrix(acid_lins_naive_usage_zscores) + 0)
+  acid_regression_df[z,] <- as.numeric(acid_regression_list[[z]]$coefficients)
+}
+rownames(acid_regression_df) <- colnames(acid@meta.data)[grep('Usage', colnames(acid@meta.data))][1:7]
+
+# Output the heatmap of the regressions of acid vs naive
+pdf('NMF/NMF_mapping_for_paper/acid_usage_regression_heatmap.pdf')
+pheatmap(t(acid_regression_df), color = cividis(13), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.3,0.3,.05))
+dev.off()
+
+#Output heatmaps of built in significance of regression
+acid_regression_p_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(acid_regression_p_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+for (z in 1:7){
+  acid_regression_p_df[z,] <- as.numeric(summary(acid_regression_list[[z]])$coefficients[,4])
+}
+rownames(acid_regression_p_df) <- colnames(acid@meta.data)[grep('Usage', colnames(acid@meta.data))][1:7]
+
+pdf('NMF/NMF_mapping_for_paper/acid_usage_regression_p_heatmap.pdf')
+pheatmap(-log10(t(acid_regression_p_df)), color =  brewer.pal(n = 75, name = "Purples"), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(0,1.6,.2))
+dev.off()
+
+```
+
+## Perform 100 simulations and compare - keep the endstate data constant and shuffle lineage labels on naive data
+```{r}
+list_acid_lins_naive_usages_list_rand <- list() # List of simulated naive usages using acid resistant lins
+list_acid_lins_naive_usage_df_rand <- list() # List of simulated naive usages using acid resistant lins converted to dataframe
+list_acid_regression_df_rand <- list() # list of regression dataframes
+list_acid_regression_list_rand <- list() # list of regression dataframes lists
+for (q in 1:100){
+  set.seed(q)
+  list_acid_lins_naive_usages_list_rand[[paste0('Simulation_',q)]] <- list()
+  temp_rand_lins <- naive$assigned_lineage
+  names(temp_rand_lins) <- sample(names(temp_rand_lins), replace = F)
+  naive$rand_lineage <- temp_rand_lins
+  for(i in acid_lins){ # get the top quartile data
+    list_acid_lins_naive_usages_list_rand[[paste0('Simulation_',q)]][[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$rand_lineage == i,],.75)[[1]])
+  }
+  temp_df <- do.call(rbind.data.frame, list_acid_lins_naive_usages_list_rand[[paste0('Simulation_',q)]])
+  list_acid_lins_naive_usage_df_rand[[paste0('Simulation_',q)]] <- apply(temp_df,2,zscore) # zscore all clones for each usage
+  colnames(list_acid_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  rownames(list_acid_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- acid_lins
+
+  # do the linear regressions, one Acid usage at a time
+  list_acid_regression_df_rand[[paste0('Simulation_',q)]] <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+  colnames(list_acid_regression_df_rand[[paste0('Simulation_',q)]] ) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  list_acid_regression_list_rand[[paste0('Simulation_',q)]]<- list()
+  for (z in 1:ncol(acid_zscores)){
+   list_acid_regression_list_rand[[paste0('Simulation_',q)]][[z]] <- lm(as.matrix(acid_usage_df[,z])~ as.matrix(list_acid_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) + 0)
+   list_acid_regression_df_rand[[paste0('Simulation_',q)]][z,] <- as.numeric(list_acid_regression_list_rand[[paste0('Simulation_',q)]][[z]]$coefficients)
+  }
+  rownames(list_acid_regression_df_rand[[paste0('Simulation_',q)]]) <- colnames(acid@meta.data)[grep('Usage', colnames(acid@meta.data))][1:7]
+  #pheatmap(t(list_acid_regression_df_rand[[paste0('Simulation_',q)]]), color = mako(10), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.1,0.3,.05))
+}
+
+# Get all of the simulated values
+acid_sim_vals <- list()
+for( i in colnames(acid@meta.data)[grep('Usage', colnames(acid@meta.data))][1:7]){
+  for (j in colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]){
+    acid_sim_vals[[paste0('acid_',i,'_','Naive_',j)]] <- as.numeric(sapply(list_acid_regression_df_rand, function(x) x[i, j]))
+  }
+}
+
+# do Z testing to calculate p values
+acid_ztest_val <- c()
+pdf('NMF/NMF_mapping_for_paper/Acid_regression_histograms_vs_permutations.pdf')
+# Compare the observed measurement to the distribution for each comparison
+for (i in names(acid_sim_vals)){
+  hist(acid_sim_vals[[i]], main = i, xlim=c(-.3,.3))
+  abline(v = acid_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]], col = 'red', lwd = 5)
+  acid_ztest_val <- c(acid_ztest_val,(acid_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]]- mean(acid_sim_vals[[i]]))/sd(acid_sim_vals[[i]]))
+}
+dev.off()
+names(acid_ztest_val) <- names(acid_sim_vals)
+
+acid_ztest_pval_df <- data.frame(acid_ztest_val)
+acid_ztest_pval_df$sig <- abs(acid_ztest_val) > 1.96 # 0.025% confidence, two sided
+write.csv(acid_ztest_pval_df, 'NMF/NMF_mapping_for_paper/acid_ztest_pvals.csv')
+```
+
+# Cisplatin
+## Hierarchical clustering
+```{r}
+# Use top clones with at least 2 cells both before and after treatment, using only the first 8 usages that actually contained information
+cis_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['cis']], decreasing = T),]$Lineage[1:num_lin]
+
+# Build dataframe of usages per clone from Cisplatin resistant data - top quartile
+cis_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:9){
+  cis_lin_usages_df[[paste0('Usage',i)]] <- sapply(cis_lins, function(x) quantile(cis[[paste0('Usage',i)]][cis$assigned_lineage == x,],.75))
+}
+rownames(cis_lin_usages_df) <- cis_lins  
+cis_heatmap_col <- pheatmap(t(cis_lin_usages_df), scale = 'column', main = 'Cisplatin - column normalized', cutree_cols = 4)
+cis_heatmap_row <- pheatmap(t(cis_lin_usages_df), scale = 'row', main = 'Cisplatin - row normalized', cutree_cols = 4)
+cis_heatmap <- pheatmap(t(cis_lin_usages_df), scale = 'none', main = 'Cisplatin - no normalized', cutree_cols = 3)
+
+# Build dataframe of usages per clone from naive data - top quartile
+cis_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  cis_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(cis_lins, function(x) quantile(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,],.75))
+  
+}
+rownames(cis_lin_naive_usages_df) <- cis_lins 
+naive_heatmap_cis_lins_col <- pheatmap(t(cis_lin_naive_usages_df), scale = 'column', main = 'naive cells with Cisplatin lineages - column norm')
+naive_heatmap_cis_lins_row <- pheatmap(t(cis_lin_naive_usages_df), scale = 'row', main = 'naive cells with Cisplatin lineages - row norm')
+naive_heatmap_cis_lins <- pheatmap(t(cis_lin_naive_usages_df), scale = 'none', main = 'naive cells with Cisplatin lineages - no norm')
+
+# Output the heatmaps
+pdf('NMF/NMF_mapping_for_paper/cis_usage_heatmaps.pdf')
+print(cis_heatmap_col)
+grid::grid.newpage()
+print(cis_heatmap_row)
+grid::grid.newpage()
+print(cis_heatmap)
+grid::grid.newpage()
+print(naive_heatmap_cis_lins_col)
+grid::grid.newpage()
+print(naive_heatmap_cis_lins_row)
+grid::grid.newpage()
+print(naive_heatmap_cis_lins)
+dev.off()
+```
+
+## Do linear regression on z scored data
+```{r}
+# Make a list of Cisplatin usages based on top cis resistant lins
+cis_usage_list <- list()
+for(i in cis_lins){
+  cis_usage_list[[i]] <- sapply(colnames(cis@meta.data)[grep('Usage', colnames(cis@meta.data))][1:9], function(x) quantile(cis[[x]][cis$assigned_lineage == i,],.75)[[1]])
+}
+cis_usage_df <- do.call(rbind.data.frame, cis_usage_list)
+colnames(cis_usage_df) <- colnames(cis@meta.data)[grep('Usage', colnames(cis@meta.data))][1:9]
+rownames(cis_usage_df) <- cis_lins
+cis_zscores <- apply(cis_usage_df,2,zscore)
+
+# Make a list of naive usages based on top cis resistant lins
+cis_lins_naive_usages_list <-list()
+for(i in cis_lins){
+  cis_lins_naive_usages_list[[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$assigned_lineage == i,],.75)[[1]])
+}
+cis_lins_naive_usage_df <- do.call(rbind.data.frame, cis_lins_naive_usages_list)
+colnames(cis_lins_naive_usage_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+rownames(cis_lins_naive_usage_df) <- cis_lins
+cis_lins_naive_usage_zscores <- apply(cis_lins_naive_usage_df,2,zscore) 
+
+# do the linear regressions, one Cisplatin usage at a time
+cis_regression_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(cis_regression_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+cis_regression_list <- list()
+for (z in 1:9){
+  cis_regression_list[[z]] <- lm(as.matrix(cis_zscores[,z])~ as.matrix(cis_lins_naive_usage_zscores) + 0)
+  cis_regression_df[z,] <- as.numeric(cis_regression_list[[z]]$coefficients)
+}
+rownames(cis_regression_df) <- colnames(cis@meta.data)[grep('Usage', colnames(cis@meta.data))][1:9]
+
+# Output the heatmap of the regressions of cis vs naive
+pdf('NMF/NMF_mapping_for_paper/cis_usage_regression_heatmap.pdf')
+pheatmap(t(cis_regression_df), color = cividis(13), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.3,0.3,.05))
+dev.off()
+
+#Output heatmaps of built in significance of regression
+cis_regression_p_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(cis_regression_p_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+for (z in 1:9){
+  cis_regression_p_df[z,] <- as.numeric(summary(cis_regression_list[[z]])$coefficients[,4])
+}
+rownames(cis_regression_p_df) <- colnames(cis@meta.data)[grep('Usage', colnames(cis@meta.data))][1:9]
+
+pdf('NMF/NMF_mapping_for_paper/cis_usage_regression_p_heatmap.pdf')
+pheatmap(-log10(t(cis_regression_p_df)), color =  brewer.pal(n = 75, name = "Purples"), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(0,1.6,.2))
+dev.off()
+
+```
+
+## Perform 100 simulations and compare - keep the endstate data constant and shuffle lineage labels on naive data
+```{r}
+list_cis_lins_naive_usages_list_rand <- list() # List of simulated naive usages using cis resistant lins
+list_cis_lins_naive_usage_df_rand <- list() # List of simulated naive usages using cis resistant lins converted to dataframe
+list_cis_regression_df_rand <- list() # list of regression dataframes
+list_cis_regression_list_rand <- list() # list of regression dataframes lists
+for (q in 1:100){
+  set.seed(q)
+  list_cis_lins_naive_usages_list_rand[[paste0('Simulation_',q)]] <- list()
+  temp_rand_lins <- naive$assigned_lineage
+  names(temp_rand_lins) <- sample(names(temp_rand_lins), replace = F)
+  naive$rand_lineage <- temp_rand_lins
+  for(i in cis_lins){ # get the top quartile data
+    list_cis_lins_naive_usages_list_rand[[paste0('Simulation_',q)]][[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$rand_lineage == i,],.75)[[1]])
+  }
+  temp_df <- do.call(rbind.data.frame, list_cis_lins_naive_usages_list_rand[[paste0('Simulation_',q)]])
+  list_cis_lins_naive_usage_df_rand[[paste0('Simulation_',q)]] <- apply(temp_df,2,zscore) # zscore all clones for each usage
+  colnames(list_cis_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  rownames(list_cis_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- cis_lins
+
+  # do the linear regressions, one Cisplatin usage at a time
+  list_cis_regression_df_rand[[paste0('Simulation_',q)]] <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+  colnames(list_cis_regression_df_rand[[paste0('Simulation_',q)]] ) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  list_cis_regression_list_rand[[paste0('Simulation_',q)]]<- list()
+  for (z in 1:ncol(cis_zscores)){
+   list_cis_regression_list_rand[[paste0('Simulation_',q)]][[z]] <- lm(as.matrix(cis_usage_df[,z])~ as.matrix(list_cis_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) + 0)
+   list_cis_regression_df_rand[[paste0('Simulation_',q)]][z,] <- as.numeric(list_cis_regression_list_rand[[paste0('Simulation_',q)]][[z]]$coefficients)
+  }
+  rownames(list_cis_regression_df_rand[[paste0('Simulation_',q)]]) <- colnames(cis@meta.data)[grep('Usage', colnames(cis@meta.data))][1:9]
+  #pheatmap(t(list_cis_regression_df_rand[[paste0('Simulation_',q)]]), color = mako(10), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.1,0.3,.05))
+}
+
+# Get all of the simulated values
+cis_sim_vals <- list()
+for( i in colnames(cis@meta.data)[grep('Usage', colnames(cis@meta.data))][1:9]){
+  for (j in colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]){
+    cis_sim_vals[[paste0('cis_',i,'_','Naive_',j)]] <- as.numeric(sapply(list_cis_regression_df_rand, function(x) x[i, j]))
+  }
+}
+
+# do Z testing to calculate p values
+cis_ztest_val <- c()
+pdf('NMF/NMF_mapping_for_paper/Cisplatin_regression_histograms_vs_permutations.pdf')
+# Compare the observed measurement to the distribution for each comparison
+for (i in names(cis_sim_vals)){
+  hist(cis_sim_vals[[i]], main = i, xlim=c(-.3,.3))
+  abline(v = cis_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]], col = 'red', lwd = 5)
+  cis_ztest_val <- c(cis_ztest_val,(cis_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]]- mean(cis_sim_vals[[i]]))/sd(cis_sim_vals[[i]]))
+}
+dev.off()
+names(cis_ztest_val) <- names(cis_sim_vals)
+
+cis_ztest_pval_df <- data.frame(cis_ztest_val)
+cis_ztest_pval_df$sig <- abs(cis_ztest_val) > 1.96 # 0.025% confidence, two sided
+write.csv(cis_ztest_pval_df, 'NMF/NMF_mapping_for_paper/cis_ztest_pvals.csv')
+```
+
+# Doxorubicin
+## Hierarchical clustering
+```{r}
+# Use top clones with at least 2 cells both before and after treatment, using only the first 8 usages that actually contained information
+dox_lins <- clones_df[which(clones_df$naive > 1),][order(clones_df[which(clones_df$naive > 1),][['dox']], decreasing = T),]$Lineage[1:num_lin]
+
+# Build dataframe of usages per clone from Doxorubicin resistant data - top quartile
+dox_lin_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:2){
+  dox_lin_usages_df[[paste0('Usage',i)]] <- sapply(dox_lins, function(x) quantile(dox[[paste0('Usage',i)]][dox$assigned_lineage == x,],.75))
+}
+rownames(dox_lin_usages_df) <- dox_lins  
+dox_heatmap_col <- pheatmap(t(dox_lin_usages_df), scale = 'column', main = 'Doxorubicin - column normalized', cutree_cols = 4)
+dox_heatmap_row <- pheatmap(t(dox_lin_usages_df), scale = 'row', main = 'Doxorubicin - row normalized', cutree_cols = 4)
+dox_heatmap <- pheatmap(t(dox_lin_usages_df), scale = 'none', main = 'Doxorubicin - no normalized', cutree_cols = 3)
+
+# Build dataframe of usages per clone from naive data - top quartile
+dox_lin_naive_usages_df <- data.frame(matrix(vector(),num_lin,0))
+for (i in 1:4){
+  dox_lin_naive_usages_df[[paste0('Usage',i)]] <- sapply(dox_lins, function(x) quantile(naive[[paste0('Usage',i)]][naive$assigned_lineage == x,],.75))
+  
+}
+rownames(dox_lin_naive_usages_df) <- dox_lins 
+naive_heatmap_dox_lins_col <- pheatmap(t(dox_lin_naive_usages_df), scale = 'column', main = 'naive cells with Doxorubicin lineages - column norm')
+naive_heatmap_dox_lins_row <- pheatmap(t(dox_lin_naive_usages_df), scale = 'row', main = 'naive cells with Doxorubicin lineages - row norm')
+naive_heatmap_dox_lins <- pheatmap(t(dox_lin_naive_usages_df), scale = 'none', main = 'naive cells with Doxorubicin lineages - no norm')
+
+# Output the heatmaps
+pdf('NMF/NMF_mapping_for_paper/dox_usage_heatmaps.pdf')
+print(dox_heatmap_col)
+grid::grid.newpage()
+print(dox_heatmap_row)
+grid::grid.newpage()
+print(dox_heatmap)
+grid::grid.newpage()
+print(naive_heatmap_dox_lins_col)
+grid::grid.newpage()
+print(naive_heatmap_dox_lins_row)
+grid::grid.newpage()
+print(naive_heatmap_dox_lins)
+dev.off()
+```
+
+## Do linear regression on z scored data
+```{r}
+# Make a list of Doxorubicin usages based on top dox resistant lins
+dox_usage_list <- list()
+for(i in dox_lins){
+  dox_usage_list[[i]] <- sapply(colnames(dox@meta.data)[grep('Usage', colnames(dox@meta.data))][1:2], function(x) quantile(dox[[x]][dox$assigned_lineage == i,],.75)[[1]])
+}
+dox_usage_df <- do.call(rbind.data.frame, dox_usage_list)
+colnames(dox_usage_df) <- colnames(dox@meta.data)[grep('Usage', colnames(dox@meta.data))][1:2]
+rownames(dox_usage_df) <- dox_lins
+dox_zscores <- apply(dox_usage_df,2,zscore)
+
+# Make a list of naive usages based on top dox resistant lins
+dox_lins_naive_usages_list <-list()
+for(i in dox_lins){
+  dox_lins_naive_usages_list[[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$assigned_lineage == i,],.75)[[1]])
+}
+dox_lins_naive_usage_df <- do.call(rbind.data.frame, dox_lins_naive_usages_list)
+colnames(dox_lins_naive_usage_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+rownames(dox_lins_naive_usage_df) <- dox_lins
+dox_lins_naive_usage_zscores <- apply(dox_lins_naive_usage_df,2,zscore) 
+
+# do the linear regressions, one Doxorubicin usage at a time
+dox_regression_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(dox_regression_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+dox_regression_list <- list()
+for (z in 1:2){
+  dox_regression_list[[z]] <- lm(as.matrix(dox_zscores[,z])~ as.matrix(dox_lins_naive_usage_zscores) + 0)
+  dox_regression_df[z,] <- as.numeric(dox_regression_list[[z]]$coefficients)
+}
+rownames(dox_regression_df) <- colnames(dox@meta.data)[grep('Usage', colnames(dox@meta.data))][1:2]
+
+# Output the heatmap of the regressions of dox vs naive
+pdf('NMF/NMF_mapping_for_paper/dox_usage_regression_heatmap.pdf')
+pheatmap(t(dox_regression_df), color = cividis(13), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.3,0.3,.05))
+dev.off()
+
+#Output heatmaps of built in significance of regression
+dox_regression_p_df <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+colnames(dox_regression_p_df) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+for (z in 1:2){
+  dox_regression_p_df[z,] <- as.numeric(summary(dox_regression_list[[z]])$coefficients[,4])
+}
+rownames(dox_regression_p_df) <- colnames(dox@meta.data)[grep('Usage', colnames(dox@meta.data))][1:2]
+
+pdf('NMF/NMF_mapping_for_paper/dox_usage_regression_p_heatmap.pdf')
+pheatmap(-log10(t(dox_regression_p_df)), color =  brewer.pal(n = 75, name = "Purples"), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(0,1.6,.2))
+dev.off()
+
+```
+
+## Perform 100 simulations and compare - keep the endstate data constant and shuffle lineage labels on naive data
+```{r}
+list_dox_lins_naive_usages_list_rand <- list() # List of simulated naive usages using dox resistant lins
+list_dox_lins_naive_usage_df_rand <- list() # List of simulated naive usages using dox resistant lins converted to dataframe
+list_dox_regression_df_rand <- list() # list of regression dataframes
+list_dox_regression_list_rand <- list() # list of regression dataframes lists
+for (q in 1:100){
+  set.seed(q)
+  list_dox_lins_naive_usages_list_rand[[paste0('Simulation_',q)]] <- list()
+  temp_rand_lins <- naive$assigned_lineage
+  names(temp_rand_lins) <- sample(names(temp_rand_lins), replace = F)
+  naive$rand_lineage <- temp_rand_lins
+  for(i in dox_lins){ # get the top quartile data
+    list_dox_lins_naive_usages_list_rand[[paste0('Simulation_',q)]][[i]] <- sapply(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4], function(x) quantile(naive[[x]][naive$rand_lineage == i,],.75)[[1]])
+  }
+  temp_df <- do.call(rbind.data.frame, list_dox_lins_naive_usages_list_rand[[paste0('Simulation_',q)]])
+  list_dox_lins_naive_usage_df_rand[[paste0('Simulation_',q)]] <- apply(temp_df,2,zscore) # zscore all clones for each usage
+  colnames(list_dox_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  rownames(list_dox_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) <- dox_lins
+
+  # do the linear regressions, one Doxorubicin usage at a time
+  list_dox_regression_df_rand[[paste0('Simulation_',q)]] <- data.frame(matrix(ncol = length(colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4])))
+  colnames(list_dox_regression_df_rand[[paste0('Simulation_',q)]] ) <- colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]
+  list_dox_regression_list_rand[[paste0('Simulation_',q)]]<- list()
+  for (z in 1:ncol(dox_zscores)){
+   list_dox_regression_list_rand[[paste0('Simulation_',q)]][[z]] <- lm(as.matrix(dox_usage_df[,z])~ as.matrix(list_dox_lins_naive_usage_df_rand[[paste0('Simulation_',q)]]) + 0)
+   list_dox_regression_df_rand[[paste0('Simulation_',q)]][z,] <- as.numeric(list_dox_regression_list_rand[[paste0('Simulation_',q)]][[z]]$coefficients)
+  }
+  rownames(list_dox_regression_df_rand[[paste0('Simulation_',q)]]) <- colnames(dox@meta.data)[grep('Usage', colnames(dox@meta.data))][1:2]
+  #pheatmap(t(list_dox_regression_df_rand[[paste0('Simulation_',q)]]), color = mako(10), scale = 'none', cluster_cols = F, cluster_rows = F, breaks = seq(-0.1,0.3,.05))
+}
+
+# Get all of the simulated values
+dox_sim_vals <- list()
+for( i in colnames(dox@meta.data)[grep('Usage', colnames(dox@meta.data))][1:2]){
+  for (j in colnames(naive@meta.data)[grep('Usage', colnames(naive@meta.data))][1:4]){
+    dox_sim_vals[[paste0('dox_',i,'_','Naive_',j)]] <- as.numeric(sapply(list_dox_regression_df_rand, function(x) x[i, j]))
+  }
+}
+
+# do Z testing to calculate p values
+dox_ztest_val <- c()
+pdf('NMF/NMF_mapping_for_paper/Doxorubicin_regression_histograms_vs_permutations.pdf')
+# Compare the observed measurement to the distribution for each comparison
+for (i in names(dox_sim_vals)){
+  hist(dox_sim_vals[[i]], main = i, xlim=c(-.3,.3))
+  abline(v = dox_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]], col = 'red', lwd = 5)
+  dox_ztest_val <- c(dox_ztest_val,(dox_regression_df[strsplit(i,'_')[[1]][2],strsplit(i,'_')[[1]][4]]- mean(dox_sim_vals[[i]]))/sd(dox_sim_vals[[i]]))
+}
+dev.off()
+names(dox_ztest_val) <- names(dox_sim_vals)
+
+dox_ztest_pval_df <- data.frame(dox_ztest_val)
+dox_ztest_pval_df$sig <- abs(dox_ztest_val) > 1.96 # 0.025% confidence, two sided
+write.csv(dox_ztest_pval_df, 'NMF/NMF_mapping_for_paper/dox_ztest_pvals.csv')
+```
+

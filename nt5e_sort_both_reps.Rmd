@@ -1,0 +1,474 @@
+---
+title: "pw042_cellarea"
+output: html_document
+date: '2023-05-10'
+---
+
+#init
+```{r setup, include=FALSE}
+library(readr)
+library(readxl)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+
+
+colors_drug <- c('dab' = '#00B1D9',
+            'tram' = '#EB81B4',
+            'cis'= '#BEA733',
+            'dox'= '#8B008B',
+            'cocl2' = '#00AB50',
+            'acid' = '#F57F20')
+
+
+drugs <- c('dab', 'tram','cocl2', 'acid', 'cis', 'dox')
+
+
+#knitr::opts_knit$set(root.dir = '/Users/phoebewhite/Library/CloudStorage/GoogleDrive-phoebewhite@sydshafferlab.com/.shortcut-targets-by-id/1jTEIOfrKhnb_l5390zZHfgBXhT77dXPF/Schaff_Shared/Cloud/Schaff_paper/cd44_sort_and_treats')
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+```
+
+# REP 1
+## load csv
+```{r}
+areas1 <- read.csv('Data/NT5E_sort_and_treat_experiments/DLS081_rep1/DLS081_images/cell_areas.csv', header = T)
+
+areas1 <- areas1[areas1$Condition != "Blank", ]
+areas1$X <- NULL
+
+```
+
+## new df to format correctly
+```{r}
+# Get the well number and condition out of the label
+areas1$Well <- lapply(areas1$Condition, function(x) strsplit(x,'_')[[1]][10])
+areas1$Plate <- lapply(areas1$Condition, function(x) strsplit(x,'_')[[1]][9])
+areas1$drug <- NA
+areas1$nt5e <- NA
+
+for(i in 1:nrow(areas1)){
+  if (areas1$Plate[[i]] == 'FixationPlate'){
+    areas1$drug[[i]] <- 'control'
+      if (areas1$Well[[i]] %in% c('Well01','Well02')){
+        areas1$nt5e[[i]] <- 'high'
+      } else if (areas1$Well[[i]] %in% c('Well05','Well06')){
+        areas1$nt5e[[i]] <- 'low'
+      }
+  } else if (areas1$Plate[[i]] == 'Plate1'){
+    areas1$nt5e[[i]] <- 'high'
+    if (areas1$Well[[i]] %in% c('Well01','Well02','Well03','Well04')){
+      areas1$drug[[i]] <- 'dab'
+    } else if (areas1$Well[[i]] %in% c('Well05','Well06','Well07','Well08')){
+      areas1$drug[[i]] <- 'tram'
+    } else if (areas1$Well[[i]] %in% c('Well09','Well10','Well11','Well12')){
+      areas1$drug[[i]] <- 'cocl2'
+    }
+  } else if (areas1$Plate[[i]] == 'Plate2'){
+    areas1$nt5e[[i]] <- 'high'
+    if (areas1$Well[[i]] %in% c('Well01','Well02','Well03','Well04')){
+      areas1$drug[[i]] <- 'cis'
+    } else if (areas1$Well[[i]] %in% c('Well05','Well06','Well07','Well08')){
+      areas1$drug[[i]] <- 'dox'
+    } else if (areas1$Well[[i]] %in% c('Well09','Well10','Well11','Well12')){
+      areas1$drug[[i]] <- 'acid'
+    }
+  } else if (areas1$Plate[[i]] == 'Plate3'){
+    areas1$nt5e[[i]] <- 'low'
+    if (areas1$Well[[i]] %in% c('Well01','Well02','Well03','Well04')){
+      areas1$drug[[i]] <- 'dab'
+    } else if (areas1$Well[[i]] %in% c('Well05','Well06','Well07','Well08')){
+      areas1$drug[[i]] <- 'tram'
+    } else if (areas1$Well[[i]] %in% c('Well09','Well10','Well11','Well12')){
+      areas1$drug[[i]] <- 'cocl2'
+    }
+  } else if (areas1$Plate[[i]] == 'Plate4'){
+    areas1$nt5e[[i]] <- 'low'
+    if (areas1$Well[[i]] %in% c('Well01','Well02','Well03','Well04')){
+      areas1$drug[[i]] <- 'cis'
+    } else if (areas1$Well[[i]] %in% c('Well05','Well06','Well07','Well08')){
+      areas1$drug[[i]] <- 'dox'
+    } else if (areas1$Well[[i]] %in% c('Well09','Well10','Well11','Well12')){
+      areas1$drug[[i]] <- 'acid'
+    }
+  }
+}
+
+
+all_area1 <- data.frame(drug = areas1$drug,
+                      nt5e = areas1$nt5e,
+                      area = areas1$Cell_area)
+
+all_area1$mean_area <- ave(all_area1$area, 
+                           all_area1$drug, 
+                           all_area1$nt5e,
+                           FUN = mean)
+
+
+order_drug <- c('dab', 'tram', 'cis', 'dox', 'cocl2', 'acid', 'control')
+all_area1$drug <- factor(all_area1$drug, levels = order_drug)
+all_area1 <- all_area1[order(all_area1$drug, all_area1$nt5e), ]
+
+#dir.create('rdata')
+save(all_area1, file = 'nt5e_sort_and_treat/rdata/rep1_all_area_prenorm.RData')
+```
+
+
+## norm based on plating control
+```{r}
+
+# Normalized values for ratios
+norms <- list()
+for(i in c('high', 'low')){
+  t <- all_area1[all_area1$nt5e == i,]
+  p <- t[t$drug == 'control',]
+  t$norm_area <- t$area/p$mean_area[1]
+  t$norm_mean_area <- t$mean_area/p$mean_area[1]
+  norms[[i]] <- t
+}
+all_area1 <- do.call(rbind, norms)
+
+# Calculate ratios
+areas_FC_comp_to_low <- list()
+for(i in unique(all_area1$drug)){
+  n <- all_area1[all_area1$drug == i,]
+  m <- n[n$nt5e == 'low',]
+  n$FC <- n$norm_area/m$norm_mean_area[1]
+  n$FC_mean <- n$norm_mean_area/m$norm_mean_area[1]
+  areas_FC_comp_to_low[[i]] <- n
+}
+all_area1 <- do.call(rbind, areas_FC_comp_to_low)
+
+# Scale values for barplots
+# get scaling factors
+scaling_factors <- c('high' = all_area1$mean_area[all_area1$drug == 'control' & all_area1$nt5e == 'high'][1]/all_area1$mean_area[all_area1$drug == 'control' & all_area1$nt5e == 'low'][1],
+                     'low' = all_area1$mean_area[all_area1$drug == 'control' & all_area1$nt5e == 'low'][1]/all_area1$mean_area[all_area1$drug == 'control' & all_area1$nt5e == 'low'][1])
+all_area1$scaled_area[all_area1$nt5e == 'high'] <- all_area1$area[all_area1$nt5e == 'high']/ scaling_factors[['high']]
+all_area1$scaled_area[all_area1$nt5e == 'low'] <- all_area1$area[all_area1$nt5e == 'low']/ scaling_factors[['low']]
+
+all_area1$scaled_mean_area[all_area1$nt5e == 'high'] <- all_area1$mean_area[all_area1$nt5e == 'high']/ scaling_factors[['high']]
+all_area1$scaled_mean_area[all_area1$nt5e == 'low'] <- all_area1$mean_area[all_area1$nt5e == 'low']/ scaling_factors[['low']]
+
+
+all_area <- all_area1[all_area1$drug != 'control',]
+
+area1_df <- all_area[all_area$nt5e == 'high',]
+
+
+order_drug <- c('dab', 'tram', 'cis', 'dox', 'cocl2', 'acid')
+area1_df$drug <- factor(area1_df$drug, levels = order_drug)
+area1_df <- area1_df[order(area1_df$drug), ]
+ 
+save(all_area, file = 'nt5e_sort_and_treat/rdata/rep1_all_area1.RData')
+save(area1_df, file = 'nt5e_sort_and_treat/rdata/rep1_all_area_plotting.RData')
+
+```
+
+## LOAD FINAL
+```{r}
+load('nt5e_sort_and_treat/rdata/rep1_all_area_plotting.RData')
+
+# this has them scaled by plating control and compared to low as shown above but does not include either
+```
+
+## plot
+```{r}
+
+pdf(file="nt5e_sort_and_treat/rep1_plots.pdf")
+
+ggplot(all_area) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, fill = drug, color = factor(nt5e,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(nt5e,c('low','high')), fill = factor(nt5e,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_color_manual(values = c('black','red')) + scale_fill_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of nt5e high or low cells after stress")
+
+ggplot(area1_df) +
+  geom_hline(yintercept =2) + 
+  geom_hline(yintercept = 0.5) +
+  geom_point(aes(x=drug, y=FC, color=drug), size=8) +
+  geom_point(aes(x=drug, y=FC_mean), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  labs(x="Drug", y="FC NT5E High/Low")
+
+ggplot(area1_df) +
+  geom_hline(yintercept =log2(2)) + 
+  geom_hline(yintercept = log2(0.5)) +
+  geom_point(aes(x=drug, y=log2(FC), color=drug), size=8) +
+  geom_point(aes(x=drug, y=log2(FC_mean)), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  ylim(c(-4.5, 3)) +
+  labs(x="Drug", y="log2(NT5E High/Low)")
+
+dev.off()
+
+
+```
+
+
+## pvals
+```{r}
+
+load('nt5e_sort_and_treat/rdata/rep1_all_area1.RData')
+
+
+p_vals1 <- list()
+for(i in unique(all_area$drug)){
+  a <- all_area[all_area$drug == i,]
+  p_vals1[[paste0('p_', i)]] <- t.test(a$scaled_area[a$nt5e == 'low'], 
+                                      a$scaled_area[a$nt5e == 'high'],
+                                      alternative = 't')$p.value
+
+}
+
+p_vals1 <- data.frame(drug = names(p_vals1),
+                     pval = unlist(p_vals1))
+
+
+p_vals1$pval <- signif(p_vals1$pval, digits = 5)
+p_vals1$sig <- ifelse(p_vals1$pval <0.05, 'T', 'F')
+
+save(p_vals1, file = 'nt5e_sort_and_treat/rdata/rep1_area_pvalue.RData')
+load('nt5e_sort_and_treat/rdata/rep1_area_pvalue.RData')
+
+```
+
+# REP 2
+## load csv
+```{r}
+areas2 <- read.csv('Data/NT5E_sort_and_treat_experiments/DLS088_rep2/Scans/cell_areas.csv', header = T)
+
+areas2 <- areas2[areas2$Condition != "Blank", ]
+areas2$X <- NULL
+
+```
+
+## new df to format correctly
+```{r}
+
+areas2$Well <- NA
+areas2$drug <- NA
+areas2$nt5e <- NA
+
+# Get the well number and condition out of the label
+for(i in 1:nrow(areas2)){
+  if(strsplit(areas2$Condition[[i]], '_')[[1]][9] == 'PlatingControl'){
+    areas2$Well[[i]] <- strsplit(areas2$Condition[[i]], '_')[[1]][10]
+    areas2$drug[[i]] <- 'control'
+    if (areas2$Well[[i]] %in% c('Well01','Well05','Well09')){
+        areas2$nt5e[[i]] <- 'high'
+      } else if (areas2$Well[[i]] %in% c('Well02','Well06','Well10')){
+        areas2$nt5e[[i]] <- 'low'
+      }
+  } else if (strsplit(areas2$Condition[[i]], '_')[[1]][9] != 'PlatingControl'){
+    areas2$Well[[i]] <- strsplit(areas2$Condition[[i]], '_')[[1]][13]
+    if (areas2$Well[[i]] %in% c('Well01','Well02','Well05','Well06','Well09','Well10')){
+      areas2$drug[[i]] <- strsplit(areas2$Condition[[i]], '_')[[1]][9]
+      areas2$nt5e[[i]] <- strsplit(areas2$Condition[[i]], '_')[[1]][12]
+    } else if (areas2$Well[[i]] %in% c('Well03','Well04','Well07','Well08','Well11','Well12')){
+      areas2$drug[[i]] <- strsplit(areas2$Condition[[i]], '_')[[1]][10]
+      areas2$nt5e[[i]] <- strsplit(areas2$Condition[[i]], '_')[[1]][12]
+    }
+  }
+}
+
+
+areas2$drug <- tolower(areas2$drug)
+areas2$nt5e <- tolower(areas2$nt5e)
+
+
+all_area2 <- data.frame(drug = areas2$drug,
+                      nt5e = areas2$nt5e,
+                      area = areas2$Cell_area)
+
+all_area2$mean_area <- ave(all_area2$area, 
+                           all_area2$drug, 
+                           all_area2$nt5e,
+                           FUN = mean)
+
+
+order_drug <- c('dab', 'tram', 'cis', 'dox', 'cocl2', 'acid', 'control')
+all_area2$drug <- factor(all_area2$drug, levels = order_drug)
+all_area2 <- all_area2[order(all_area2$drug, all_area2$nt5e), ]
+
+#dir.create('rdata')
+save(all_area2, file = 'nt5e_sort_and_treat/rdata/rep2_all_area_prenorm.RData')
+```
+
+## norm based on plating control
+```{r}
+
+# Normalized values for ratios
+norms2 <- list()
+for(i in c('high', 'low')){
+  t <- all_area2[all_area2$nt5e == i,]
+  p <- t[t$drug == 'control',]
+  t$norm_area <- t$area/p$mean_area[1]
+  t$norm_mean_area <- t$mean_area/p$mean_area[1]
+  norms2[[i]] <- t
+}
+all_area2 <- do.call(rbind, norms2)
+
+# Calculate ratios
+areas2_FC_comp_to_low <- list()
+for(i in unique(all_area2$drug)){
+  n <- all_area2[all_area2$drug == i,]
+  m <- n[n$nt5e == 'low',]
+  n$FC <- n$norm_area/m$norm_mean_area[1]
+  n$FC_mean <- n$norm_mean_area/m$norm_mean_area[1]
+  areas2_FC_comp_to_low[[i]] <- n
+}
+all_area2 <- do.call(rbind, areas2_FC_comp_to_low)
+
+# Scale values for barplots
+# get scaling factors
+scaling_factors2 <- c('high' = all_area2$mean_area[all_area2$drug == 'control' & all_area2$nt5e == 'high'][1]/all_area2$mean_area[all_area2$drug == 'control' & all_area2$nt5e == 'low'][1],
+                     'low' = all_area2$mean_area[all_area2$drug == 'control' & all_area2$nt5e == 'low'][1]/all_area2$mean_area[all_area2$drug == 'control' & all_area2$nt5e == 'low'][1])
+all_area2$scaled_area[all_area2$nt5e == 'high'] <- all_area2$area[all_area2$nt5e == 'high']/ scaling_factors2[['high']]
+all_area2$scaled_area[all_area2$nt5e == 'low'] <- all_area2$area[all_area2$nt5e == 'low']/ scaling_factors2[['low']]
+
+all_area2$scaled_mean_area[all_area2$nt5e == 'high'] <- all_area2$mean_area[all_area2$nt5e == 'high']/ scaling_factors2[['high']]
+all_area2$scaled_mean_area[all_area2$nt5e == 'low'] <- all_area2$mean_area[all_area2$nt5e == 'low']/ scaling_factors2[['low']]
+
+
+all_area2 <- all_area2[all_area2$drug != 'control',]
+
+area2_df <- all_area2[all_area2$nt5e == 'high',]
+
+
+order_drug <- c('dab', 'tram', 'cis', 'dox', 'cocl2', 'acid')
+area2_df$drug <- factor(area2_df$drug, levels = order_drug)
+area2_df <- area2_df[order(area2_df$drug), ]
+ 
+save(all_area, file = 'nt5e_sort_and_treat/rdata/rep2_all_area2.RData')
+save(area2_df, file = 'nt5e_sort_and_treat/rdata/rep2_all_area_plotting.RData')
+
+```
+
+## LOAD FINAL
+```{r}
+load('nt5e_sort_and_treat/rdata/rep2_all_area_plotting.RData')
+
+# this has them scaled by plating control and compared to low as shown above but does not include either
+```
+
+## plot
+```{r}
+
+pdf(file="nt5e_sort_and_treat/rep2_plots.pdf")
+
+ggplot(area2_df) +
+  geom_hline(yintercept =2) + 
+  geom_hline(yintercept = 0.5) +
+  geom_point(aes(x=drug, y=FC, color=drug), size=8) +
+  geom_point(aes(x=drug, y=FC_mean), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  labs(x="Drug", y="FC NT5E High/Low")
+
+ggplot(area2_df) +
+  geom_hline(yintercept =log2(2)) + 
+  geom_hline(yintercept = log2(0.5)) +
+  geom_point(aes(x=drug, y=log2(FC), color=drug), size=8) +
+  geom_point(aes(x=drug, y=log2(FC_mean)), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  ylim(c(-4.5, 3)) +
+  labs(x="Drug", y="log2(NT5E High/Low)")
+
+dev.off()
+
+
+```
+
+
+## pvals
+```{r}
+
+
+load('nt5e_sort_and_treat/rdata/rep2_all_area2.RData')
+
+
+p_vals2 <- list()
+for(i in unique(all_area2$drug)){
+  a <- all_area2[all_area2$drug == i,]
+  p_vals2[[paste0('p_', i)]] <- t.test(a$scaled_area[a$nt5e == 'low'], 
+                                      a$scaled_area[a$nt5e == 'high'],
+                                      alternative = 't')$p.value
+
+}
+
+p_vals2 <- data.frame(drug = names(p_vals2),
+                     pval = unlist(p_vals2))
+
+
+p_vals2$pval <- signif(p_vals2$pval, digits = 5)
+p_vals2$sig <- ifelse(p_vals2$pval <0.05, 'T', 'F')
+
+save(p_vals2, file = 'nt5e_sort_and_treat/rdata/rep2_area_pvalue.RData')
+load('nt5e_sort_and_treat/rdata/rep2_area_pvalue.RData')
+
+```
+
+# Plot the data together
+```{r}
+load('nt5e_sort_and_treat/rdata/rep1_all_area1.RData')
+load('nt5e_sort_and_treat/rdata/rep2_all_area2.RData')
+all_area$rep <- 'Rep1'
+all_area2$rep <- 'Rep2'
+
+comb_area <- rbind(all_area,all_area2)
+
+
+# Do different combinations of plots
+
+# Plot each replicate separately, diff axes
+pdf('nt5e_sort_and_treat/plot_by_rep_diff_axes.pdf')
+
+ggplot(comb_area[comb_area$rep == 'Rep1',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(nt5e,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(nt5e,c('low','high')), fill = factor(nt5e,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of nt5e high or low cells after stress - Rep1")
+
+
+ggplot(comb_area[comb_area$rep == 'Rep2',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(nt5e,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(nt5e,c('low','high')), fill = factor(nt5e,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of nt5e high or low cells after stress - Rep2")
+
+dev.off()
+
+# Plot each replicate separately, same axes
+pdf('nt5e_sort_and_treat/plot_by_rep_same_axes.pdf')
+
+ggplot(comb_area[comb_area$rep == 'Rep1',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(nt5e,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(nt5e,c('low','high')), fill = factor(nt5e,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of nt5e high or low cells after stress - Rep1") + ylim(0,10000000)
+
+
+ggplot(comb_area[comb_area$rep == 'Rep2',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(nt5e,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(nt5e,c('low','high')), fill = factor(nt5e,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of nt5e high or low cells after stress - Rep2") + ylim(0,10000000)
+
+dev.off()
+
+# Plot each condition separately, diff axes
+pdf('nt5e_sort_and_treat/plot_by_cond_diff_axes.pdf')
+for (i in order_drug){
+  print(ggplot(comb_area[comb_area$drug == i,]) +
+    geom_col(aes(x= rep, y = scaled_mean_area, color = drug, fill = factor(nt5e,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+    geom_point(aes(x= rep, y = scaled_area, group = factor(nt5e,c('low','high')), fill = factor(nt5e,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey52')) + scale_color_manual(values = colors_drug)+
+    labs(x="Drug", y="Scaled cell abundance", title = paste("Abundance of nt5e high or low cells after stress -",i)))
+}
+dev.off()
+
+# Plot each condition separately, same axes
+pdf('nt5e_sort_and_treat/plot_by_cond_same_axes.pdf')
+for (i in order_drug){
+  print(ggplot(comb_area[comb_area$drug == i,]) +
+    geom_col(aes(x= rep, y = scaled_mean_area, color = drug, fill = factor(nt5e,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+    geom_point(aes(x= rep, y = scaled_area, group = factor(nt5e,c('low','high')), fill = factor(nt5e,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey52')) + scale_color_manual(values = colors_drug)+
+    labs(x="Drug", y="Scaled cell abundance", title = paste("Abundance of nt5e high or low cells after stress -",i)) + ylim(0,15000000))
+}
+dev.off()
+```
+

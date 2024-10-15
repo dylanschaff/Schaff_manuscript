@@ -1,0 +1,438 @@
+---
+title: "CD44_sort_and_treat"
+output: html_document
+date: '2023-05-10'
+---
+
+#init
+```{r setup, include=FALSE}
+library(readr)
+library(readxl)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+
+
+colors_drug <- c('dab' = '#00B1D9',
+            'tram' = '#EB81B4',
+            'cis'= '#BEA733',
+            'cocl2' = '#00AB50',
+            'acid' = '#F57F20',
+            'dox'= '#8B008B' )
+
+
+drugs <- c('dab', 'tram','cocl2', 'acid', 'cis', 'dox')
+
+
+
+#knitr::opts_knit$set(root.dir = '/Users/phoebewhite/Library/CloudStorage/GoogleDrive-phoebewhite@sydshafferlab.com/.shortcut-targets-by-id/1jTEIOfrKhnb_l5390zZHfgBXhT77dXPF/Schaff_Shared/Cloud/Schaff_paper/cd44_sort_and_treats')
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+
+```
+
+# REP 1
+## load csv
+```{r}
+area_files <- list.files(path = 'Data/CD44_sort_and_treat_experiments/pw037_rep1/cellarea_outputs', pattern = '*.csv', recursive=F, full.names = T)
+areas <- lapply(area_files, read.csv, header = T)
+
+areas <- lapply(areas, function(x) x[x$Condition != "Blank", ])
+areas <- lapply(areas, function(x) {x$X <- NULL;return(x)})
+
+```
+
+## new df to format correctly
+```{r}
+all_area_df <- do.call(rbind, areas)
+
+all_area_df <- data.frame(drug = sapply(all_area_df$Condition, function(x) strsplit(x, '_')[[1]][[8]]),
+                      cd44 = sapply(all_area_df$Condition, function(x) strsplit(x, '_')[[1]][[7]]),
+                      area = all_area_df$Cell_area)
+
+# isolate plating control and rename
+plating_controls <- all_area_df[all_area_df$cd44 == 'control',]
+for(i in c('Well01', 'Well05', 'Well09', 'Well02', 'Well06', 'Well10')){
+  plating_controls$drug <- gsub(i, 'low', plating_controls$drug)
+}
+for(i in c('Well03', 'Well07', 'Well11', 'Well12', 'Well04', 'Well08')){
+  plating_controls$drug <- gsub(i, 'high', plating_controls$drug)
+}
+plating_controls$cd44 <- plating_controls$drug
+plating_controls$drug <- rep('control', 12)
+
+# recombine with all
+all_area_df <- all_area_df[all_area_df$cd44 != 'control',]
+all_area_df <- rbind(all_area_df, plating_controls)
+
+all_area_df$mean_area <- ave(all_area_df$area, 
+                           all_area_df$drug, 
+                           all_area_df$cd44,
+                           FUN = mean)
+
+
+order_drug <- c('dab', 'tram', 'cis', 'dox', 'cocl2', 'acid', 'control')
+all_area_df$drug <- factor(all_area_df$drug, levels = order_drug)
+all_area_df <- all_area_df[order(all_area_df$drug, all_area_df$cd44), ]
+
+#dir.create('rdata')
+save(all_area_df, file = 'cd44_sort_and_treats/rdata/rep1_all_area_prenorm.RData')
+```
+
+
+## norm based on plating control
+```{r}
+# Normalized values for ratios
+norms <- list()
+for(i in c('high', 'low')){
+  t <- all_area_df[all_area_df$cd44 == i,]
+  p <- t[t$drug == 'control',]
+  t$norm_area <- t$area/p$mean_area[1]
+  t$norm_mean_area <- t$mean_area/p$mean_area[1]
+  norms[[i]] <- t
+}
+all_area_df <- do.call(rbind, norms)
+
+# Calculate ratios
+areas_FC_comp_to_low <- list()
+for(i in unique(all_area_df$drug)){
+  n <- all_area_df[all_area_df$drug == i,]
+  m <- n[n$cd44 == 'low',]
+  n$FC <- n$norm_area/m$norm_mean_area[1]
+  n$FC_mean <- n$norm_mean_area/m$norm_mean_area[1]
+  areas_FC_comp_to_low[[i]] <- n
+}
+all_area_df <- do.call(rbind, areas_FC_comp_to_low)
+
+# Scale values for barplots
+# get scaling factors
+scaling_factors <- c('high' = all_area_df$mean_area[all_area_df$drug == 'control' & all_area_df$cd44 == 'high'][1]/all_area_df$mean_area[all_area_df$drug == 'control' & all_area_df$cd44 == 'low'][1],
+                     'low' = all_area_df$mean_area[all_area_df$drug == 'control' & all_area_df$cd44 == 'low'][1]/all_area_df$mean_area[all_area_df$drug == 'control' & all_area_df$cd44 == 'low'][1])
+all_area_df$scaled_area[all_area_df$cd44 == 'high'] <- all_area_df$area[all_area_df$cd44 == 'high']/ scaling_factors[['high']]
+all_area_df$scaled_area[all_area_df$cd44 == 'low'] <- all_area_df$area[all_area_df$cd44 == 'low']/ scaling_factors[['low']]
+
+all_area_df$scaled_mean_area[all_area_df$cd44 == 'high'] <- all_area_df$mean_area[all_area_df$cd44 == 'high']/ scaling_factors[['high']]
+all_area_df$scaled_mean_area[all_area_df$cd44 == 'low'] <- all_area_df$mean_area[all_area_df$cd44 == 'low']/ scaling_factors[['low']]
+
+
+all_area <- all_area_df[all_area_df$drug != 'control',]
+
+area_df <- all_area[all_area$cd44 == 'high',]
+
+
+
+area_df$drug <- factor(area_df$drug, levels = order_drug)
+area_df <- area_df[order(area_df$drug), ]
+ 
+save(all_area, file = 'cd44_sort_and_treats/rdata/rep1_all_area_df.RData')
+save(area_df, file = 'cd44_sort_and_treats/rdata/rep1_all_area_plotting.RData')
+
+```
+
+## Load back in
+```{r}
+load('cd44_sort_and_treats/rdata/rep1_all_area_plotting.RData')
+
+# this has them scaled by plating control and compared to low as shown above but does not include either
+```
+
+## plot
+```{r}
+
+pdf(file="cd44_sort_and_treats/rep1_plots.pdf")
+
+ggplot(all_area) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, fill = drug, color = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_color_manual(values = c('black','red')) + scale_fill_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of CD44 high or low cells after stress")
+
+ggplot(area_df) +
+  geom_hline(yintercept =1.5) + 
+  geom_hline(yintercept = 0.5) +
+  geom_point(aes(x=drug, y=FC, color=drug), size=8) +
+  geom_point(aes(x=drug, y=FC_mean), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  labs(x="Drug", y="FC CD44 High/Low")
+
+ggplot(area_df) +
+  geom_hline(yintercept =log2(2)) + 
+  geom_hline(yintercept = log2(0.5)) +
+  geom_point(aes(x=drug, y=log2(FC), color=drug), size=8) +
+  geom_point(aes(x=drug, y=log2(FC_mean)), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  labs(x="Drug", y="log2(CD44 High/Low)")
+
+dev.off()
+
+
+```
+
+
+## pvals
+```{r}
+
+load('cd44_sort_and_treats/rdata/rep1_all_area_df.RData')
+
+
+p_vals <- list()
+for(i in unique(all_area$drug)){
+  a <- all_area[all_area$drug == i,]
+  p_vals[[paste0('p_', i)]] <- t.test(a$scaled_area[a$cd44 == 'low'], 
+                                      a$scaled_area[a$cd44 == 'high'],
+                                      alternative = 't')$p.value
+
+}
+
+p_vals <- data.frame(drug = names(p_vals),
+                     pval = unlist(p_vals))
+
+
+p_vals$pval <- signif(p_vals$pval, digits = 5)
+p_vals$sig <- ifelse(p_vals$pval <0.05, 'T', 'F')
+
+save(p_vals, file = 'cd44_sort_and_treats/rdata/rep1_area_pvalue.RData')
+load('cd44_sort_and_treats/rdata/rep1_area_pvalue.RData')
+
+```
+
+# REP 2
+## load csv
+```{r}
+area_files2 <- list.files(path = 'Data/CD44_sort_and_treat_experiments/DLS087_rep2', pattern = '*.csv', recursive=F, full.names = T)
+areas2 <- lapply(area_files2, read.csv, header = T)
+
+areas2 <- lapply(areas2, function(x) x[x$Condition != "Blank", ])
+areas2 <- lapply(areas2, function(x) {x$X <- NULL;return(x)})
+
+```
+
+## new df to format correctly
+```{r}
+all_area_df2 <- do.call('rbind', areas2)
+
+all_area_df2 <- data.frame(cd44 = sapply(all_area_df2$Condition, function(x) strsplit(x, '_')[[1]][[9]]),
+                      area = all_area_df2$Cell_area)
+all_area_df2$drug <- NA
+
+# parse drug from name
+all_area_df2$drug[grepl('Well01|Well02|Well03',rownames(all_area_df2)) & all_area_df2$cd44 != 'PlatingControl'] <- sapply(rownames(all_area_df2)[grepl('Well01|Well02|Well03',rownames(all_area_df2)) & all_area_df2$cd44 != 'PlatingControl'], function(x) strsplit(x, '_')[[1]][[10]])
+all_area_df2$drug[grepl('Well05|Well06|Well07',rownames(all_area_df2)) & all_area_df2$cd44 != 'PlatingControl'] <- sapply(rownames(all_area_df2)[grepl('Well05|Well06|Well07',rownames(all_area_df2)) & all_area_df2$cd44 != 'PlatingControl'], function(x) strsplit(x, '_')[[1]][[11]])
+all_area_df2$drug[grepl('Well09|Well10|Well11',rownames(all_area_df2)) & all_area_df2$cd44 != 'PlatingControl'] <- sapply(rownames(all_area_df2)[grepl('Well09|Well10|Well11',rownames(all_area_df2)) & all_area_df2$cd44 != 'PlatingControl'], function(x) strsplit(x, '_')[[1]][[12]])
+
+all_area_df2$drug[all_area_df2$cd44 == 'PlatingControl'] <- 'control'
+all_area_df2$cd44[grepl('Well01|Well02|Well03',rownames(all_area_df2)) & all_area_df2$drug == 'control'] <- 'high'
+all_area_df2$cd44[grepl('Well05|Well06|Well07',rownames(all_area_df2)) & all_area_df2$drug == 'control'] <- 'low'
+
+all_area_df2$cd44[all_area_df2$drug != 'control'] <- tolower(all_area_df2$cd44[all_area_df2$drug != 'control'])
+all_area_df2$drug <- tolower(all_area_df2$drug)
+
+all_area_df2$mean_area <- ave(all_area_df2$area, 
+                           all_area_df2$drug, 
+                           all_area_df2$cd44,
+                           FUN = mean)
+
+order_drug <- c('dab', 'tram', 'cis', 'dox', 'cocl2', 'acid', 'control')
+all_area_df2$drug <- factor(all_area_df2$drug, levels = order_drug)
+all_area_df2 <- all_area_df2[order(all_area_df2$drug, all_area_df2$cd44), ]
+
+#dir.create('rdata')
+save(all_area_df2, file = 'cd44_sort_and_treats/rdata/rep2_all_area_prenorm.RData')
+load('cd44_sort_and_treats/rdata/rep2_all_area_prenorm.RData')
+```
+
+## norm based on plating control
+```{r}
+# Normalized values for ratios
+norms <- list()
+for(i in c('high', 'low')){
+  t <- all_area_df2[all_area_df2$cd44 == i,]
+  p <- t[t$drug == 'control',]
+  t$norm_area <- t$area/p$mean_area[1]
+  t$norm_mean_area <- t$mean_area/p$mean_area[1]
+  norms[[i]] <- t
+}
+all_area_df2 <- do.call(rbind, norms)
+
+# Calculate ratios
+areas_FC_comp_to_low <- list()
+for(i in unique(all_area_df2$drug)){
+  n <- all_area_df2[all_area_df2$drug == i,]
+  m <- n[n$cd44 == 'low',]
+  n$FC <- n$norm_area/m$norm_mean_area[1]
+  n$FC_mean <- n$norm_mean_area/m$norm_mean_area[1]
+  areas_FC_comp_to_low[[i]] <- n
+}
+all_area_df2 <- do.call(rbind, areas_FC_comp_to_low)
+
+# Scale values for barplots
+# get scaling factors
+scaling_factors2 <- c('high' = all_area_df2$mean_area[all_area_df2$drug == 'control' & all_area_df2$cd44 == 'high'][1]/all_area_df2$mean_area[all_area_df2$drug == 'control' & all_area_df2$cd44 == 'low'][1],
+                     'low' = all_area_df2$mean_area[all_area_df2$drug == 'control' & all_area_df2$cd44 == 'low'][1]/all_area_df2$mean_area[all_area_df2$drug == 'control' & all_area_df2$cd44 == 'low'][1])
+all_area_df2$scaled_area[all_area_df2$cd44 == 'high'] <- all_area_df2$area[all_area_df2$cd44 == 'high']/ scaling_factors2[['high']]
+all_area_df2$scaled_area[all_area_df2$cd44 == 'low'] <- all_area_df2$area[all_area_df2$cd44 == 'low']/ scaling_factors2[['low']]
+
+all_area_df2$scaled_mean_area[all_area_df2$cd44 == 'high'] <- all_area_df2$mean_area[all_area_df2$cd44 == 'high']/ scaling_factors2[['high']]
+all_area_df2$scaled_mean_area[all_area_df2$cd44 == 'low'] <- all_area_df2$mean_area[all_area_df2$cd44 == 'low']/ scaling_factors2[['low']]
+
+
+all_area2 <- all_area_df2[all_area_df2$drug != 'control',]
+
+area_df2 <- all_area2[all_area2$cd44 == 'high',]
+
+
+
+area_df2$drug <- factor(area_df2$drug, levels = order_drug)
+area_df2 <- area_df2[order(area_df2$drug), ]
+ 
+save(all_area2, file = 'cd44_sort_and_treats/rdata/rep2_all_area_df.RData')
+save(area_df2, file = 'cd44_sort_and_treats/rdata/rep2_all_area_plotting.RData')
+
+```
+
+## Load back in
+```{r}
+load('cd44_sort_and_treats/rdata/rep2_all_area_plotting.RData')
+
+# this has them scaled by plating control and compared to low as shown above but does not include either
+```
+
+## plot
+```{r}
+
+pdf(file="cd44_sort_and_treats/rep2_plots.pdf")
+
+ggplot(all_area2) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, fill = drug, color = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_color_manual(values = c('black','red')) + scale_fill_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of CD44 high or low cells after stress")
+
+ggplot(area_df2) +
+  geom_hline(yintercept =1.5) + 
+  geom_hline(yintercept = 0.5) +
+  geom_point(aes(x=drug, y=FC, color=drug), size=8) +
+  geom_point(aes(x=drug, y=FC_mean), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  labs(x="Drug", y="FC CD44 High/Low")
+
+ggplot(area_df2) +
+  geom_hline(yintercept =log2(2)) + 
+  geom_hline(yintercept = log2(0.5)) +
+  geom_point(aes(x=drug, y=log2(FC), color=drug), size=8) +
+  geom_point(aes(x=drug, y=log2(FC_mean)), color='black', shape = 18, size=8) +
+  scale_color_manual(values = colors_drug) +
+  labs(x="Drug", y="log2(CD44 High/Low)")
+
+dev.off()
+
+
+```
+
+## pvals
+```{r}
+
+load('cd44_sort_and_treats/rdata/rep2_all_area_df.RData')
+
+
+p_vals2 <- list()
+for(i in unique(all_area2$drug)){
+  a <- all_area2[all_area2$drug == i,]
+  p_vals2[[paste0('p_', i)]] <- t.test(a$scaled_area[a$cd44 == 'low'], 
+                                      a$scaled_area[a$cd44 == 'high'],
+                                      alternative = 't')$p.value
+
+}
+
+p_vals2 <- data.frame(drug = names(p_vals2),
+                     pval = unlist(p_vals2))
+
+
+p_vals2$pval <- signif(p_vals2$pval, digits = 5)
+p_vals2$sig <- ifelse(p_vals2$pval <0.05, 'T', 'F')
+
+save(p_vals2, file = 'cd44_sort_and_treats/rdata/rep2_area_pvalue.RData')
+load('cd44_sort_and_treats/rdata/rep2_area_pvalue.RData')
+
+```
+
+# Plot the data together
+```{r}
+load('cd44_sort_and_treats/rdata/rep1_all_area_df.RData')
+load('cd44_sort_and_treats/rdata/rep2_all_area_df.RData')
+
+comb_area <- rbind(all_area,all_area2)
+
+comb_area$rep <- NA
+
+comb_area$rep[grepl('pw037', rownames(comb_area))] <- 'Rep1'
+comb_area$rep[grepl('DLS087', rownames(comb_area))] <- 'Rep2'
+
+# Do different combinations of plots
+
+# Plot each replicate separately, diff axes
+pdf('cd44_sort_and_treats/plot_by_rep_diff_axes.pdf')
+
+ggplot(comb_area[comb_area$rep == 'Rep1',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of CD44 high or low cells after stress - Rep1")
+
+
+ggplot(comb_area[comb_area$rep == 'Rep2',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of CD44 high or low cells after stress - Rep2")
+
+dev.off()
+
+# Plot each replicate separately, same axes
+pdf('cd44_sort_and_treats/plot_by_rep_same_axes.pdf')
+
+ggplot(comb_area[comb_area$rep == 'Rep1',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of CD44 high or low cells after stress - Rep1") + ylim(0,6000000)
+
+
+ggplot(comb_area[comb_area$rep == 'Rep2',]) +
+  geom_col(aes(x= factor(drug,drugs), y = scaled_mean_area, color = drug, fill = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+  geom_point(aes(x= factor(drug, drugs), y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+  labs(x="Drug", y="Scaled cell abundance", title = "Abundance of CD44 high or low cells after stress - Rep2") + ylim(0,6000000)
+
+dev.off()
+
+# Plot each condition separately, diff axes
+pdf('cd44_sort_and_treats/plot_by_cond_diff_axes.pdf')
+for (i in order_drug){
+  print(ggplot(comb_area[comb_area$drug == i,]) +
+    geom_col(aes(x= rep, y = scaled_mean_area, color = drug, fill = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+    geom_point(aes(x= rep, y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+    labs(x="Drug", y="Scaled cell abundance", title = paste("Abundance of CD44 high or low cells after stress -",i)))
+}
+dev.off()
+
+# Plot each condition separately, same axes
+pdf('cd44_sort_and_treats/plot_by_cond_same_axes.pdf')
+for (i in order_drug){
+  print(ggplot(comb_area[comb_area$drug == i,]) +
+    geom_col(aes(x= rep, y = scaled_mean_area, color = drug, fill = factor(cd44,c('low','high'))), size = 1, width = 0.8, position = position_dodge(width = .9), linewidth = 0.25) +
+    geom_point(aes(x= rep, y = scaled_area, group = factor(cd44,c('low','high')), fill = factor(cd44,c('low','high'))), position = position_jitterdodge(jitter.width = 0.1,dodge.width = .9), size = .5) + scale_fill_manual(values = c('white','grey80')) + scale_color_manual(values = colors_drug)+
+    labs(x="Drug", y="Scaled cell abundance", title = paste("Abundance of CD44 high or low cells after stress -",i)) + ylim(0,6000000))
+}
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

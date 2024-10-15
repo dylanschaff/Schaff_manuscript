@@ -1,0 +1,147 @@
+---
+title: "clone_similarity"
+output: html_document
+date: "2023-04-19"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(RColorBrewer)
+library(ggpubr)
+library(pheatmap)
+library(viridis)
+library(xlsx)
+`%nin%` = Negate(`%in%`)
+num_lin = 20
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B',
+           'super' = '#FF0000')
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Make for loop to run through the different conditions and assess similarity within the clone
+```{r, include=FALSE}
+min_lin_size <- 15
+sig_sims_wilcox <- c()
+
+for (i in unique(all_data$OG_condition)){
+  print(i)
+  Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+  ind <- subset(all_data, idents = i)
+  ind <- ind %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>%  ScaleData(verbose = FALSE) %>%   RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+  
+  # Get the scaled data from the dabtram object
+  input_data <- GetAssayData(ind, assay = 'RNA', slot = 'scale.data')
+  
+  # Build list of lineages with at least min_lim_size cells in dab tram and do pearson correlation
+  pearson_list <- list()
+  for (l in names(table(ind$assigned_lineage)[table(ind$assigned_lineage) >= min_lin_size])){
+    temp_pearson <- cor(input_data[,colnames(ind)[complete.cases(ind$assigned_lineage==l)][ind$assigned_lineage[complete.cases(ind$assigned_lineage==l)] == l]])
+    temp_pearson_filt <- temp_pearson[lower.tri(temp_pearson, diag = FALSE)]
+    pearson_list[[l]] <- temp_pearson_filt
+  }
+  
+  # Repeat with 100 random simulations
+  pearson_rand_list <- list()
+  num_iter <- 100 
+  for(j in 1:num_iter){
+    pearson_rand_list[[j]] <- list()
+    for (k in names(table(ind$assigned_lineage)[table(ind$assigned_lineage) >= min_lin_size])){
+      set.seed(j)
+      num_cells <- length(colnames(ind)[complete.cases(ind$assigned_lineage==k)][ind$assigned_lineage[complete.cases(ind$assigned_lineage==k)] == k])
+      temp_pearson <- cor(input_data[,sample(colnames(ind), num_cells, replace = F)]) 
+      temp_pearson_filt <- temp_pearson[lower.tri(temp_pearson, diag = FALSE)]
+      pearson_rand_list[[j]][[k]] <- temp_pearson_filt
+      
+    }
+  }
+  
+  #Plot the first simulation on UMAP, pairwise correlations, and the correlations of two cells for figure
+  Idents(ind) <- ind$assigned_lineage
+  pdf(paste0('clone_similarity/',i,'_example_lineage.pdf'))
+  lineage_for_example <- names(which.max(table(ind$assigned_lineage)))
+  num_cells <- length(colnames(ind)[complete.cases(ind$assigned_lineage==lineage_for_example)][ind$assigned_lineage[complete.cases(ind$assigned_lineage==lineage_for_example)] == lineage_for_example])
+  set.seed(1)
+  rand_cells <- sample(colnames(ind), num_cells, replace = F)
+  actual_cells <- WhichCells(ind, idents = c(lineage_for_example))
+  DimPlot(ind,  cells.highlight= list("actual" = actual_cells, "rand" = rand_cells), cols.highlight = c( "rand" = "bisque4", "actual" = colors[[i]]), pt.size  =2, sizes.highlight = 6)
+  print(corrplot::corrplot.mixed(cor(input_data[,actual_cells[1:20]]), title = 'actual - subset 20 cells',mar=c(0,0,1,0), upper = 'color', lower = 'number'))
+  print(corrplot::corrplot.mixed(cor(input_data[,rand_cells[1:20]]), title = 'rand - subset 20 cells',mar=c(0,0,1,0), upper = 'color', lower = 'number'))
+  scatterplot_df <- data.frame("real1" = input_data[,actual_cells[1]],
+                               "real2" = input_data[,actual_cells[2]],
+                               "rand1" = input_data[,rand_cells[1]],
+                               "rand2" = input_data[,rand_cells[2]])
+  
+  real_cor <- cor.test(scatterplot_df$real1,scatterplot_df$real2)
+  rand_cor <- cor.test(scatterplot_df$rand1,scatterplot_df$rand2)
+  
+  print(ggplot(scatterplot_df, aes(x = real1, y = real2)) + geom_point(color = colors[[i]]) + geom_smooth(method=lm, se=FALSE, linetype = 'dashed', color = 'darkred') + lims(x=c(-3,12), y=c(-3,12)) + ggtitle(paste('Real data - pearson =', round(real_cor$estimate,2) , '- pval =' , real_cor$p.value))+ coord_fixed())
+  print(ggplot(scatterplot_df, aes(x = rand1, y = rand2)) + geom_point(color = 'bisque4')+ geom_smooth(method=lm, se=FALSE, linetype = 'dashed', color = 'darkred') + lims(x=c(-3,12), y=c(-3,12)) + ggtitle(paste('Random data - pearson =', round(rand_cor$estimate,2) , '- pval =' , rand_cor$p.value))+ coord_fixed())
+  dev.off() 
+  
+  # Find the mean of the average pearson correlation per lineage
+  mean_pearson <- mean(unlist(lapply(pearson_list, mean))) # True mean of average correlations per lineage
+  
+  means_pearson_sim <- sapply(1:length(pearson_rand_list), function (y)
+    mean(unlist(lapply(pearson_rand_list[[y]], mean)))) # list of mean of average correlations per lineage
+  
+  z_mean_pearson <- (mean_pearson-mean(means_pearson_sim))/sd(means_pearson_sim) # Z score comparing mean to simulations
+  pval_mean_pearson <- pnorm(z_mean_pearson, mean(means_pearson_sim), sd(means_pearson_sim), lower.tail = F) # calculate p value from z score
+  
+  
+  # Find the weighted means of the average pearson correlations per lineage
+  weighted_mean_pearson <- weighted.mean(unlist(lapply(pearson_list, mean)),
+  unlist(lapply(pearson_list, length))) # true weighted mean of average correlations per lineage
+  
+  weighted_means_pearson_sim <- sapply(1:length(pearson_rand_list), function(y)
+    weighted.mean(unlist(lapply(pearson_rand_list[[y]], mean)),
+                  unlist(lapply(pearson_rand_list[[y]], length)))) # List of weighted means of pearson correlations
+  
+  z_wmean_pearson <- (weighted_mean_pearson-mean(weighted_means_pearson_sim))/sd(weighted_means_pearson_sim) # Z score comparing mean to simulations
+  pval_wmean_pearson <- pnorm(z_wmean_pearson, mean(weighted_means_pearson_sim), sd(weighted_means_pearson_sim), lower.tail = F) # calculate p value from z score
+  
+  # Compare each individual distribution of pearson correlations to the observed correlation by wilcoxon rank sum test and track pval
+  wilcox_pval <- c()
+  for (z in 1:length(pearson_rand_list)){
+    sim_means <- unlist(lapply(pearson_rand_list[[z]], mean))
+    wilcox_pval <- cbind(wilcox_pval, wilcox.test(x = unlist(lapply(pearson_list, mean)),
+                                                                  y = sim_means, alternative = 'greater')$p.value)
+  }
+  
+  # Plot violin plot of results
+  pdf(paste0('clone_similarity/',i,'_violin_min_lin_size_',min_lin_size,'.pdf'))
+  plot_df <- data.frame('Pearson' = c(unlist(lapply(pearson_list, mean)),unlist(lapply(pearson_rand_list[[1]], mean))), 'Condition' = c(rep('Data',length(pearson_list)),rep('Simulation', length(pearson_rand_list[[1]]))))
+  print(ggplot(plot_df, aes(y = Pearson, x = Condition, color = Condition,fill = Condition)) + geom_violin(position="identity", alpha = 0.5) + geom_jitter(shape=16, position=position_jitter(0.2), size = 3) + scale_color_manual(values=c(colors[[i]],'bisque4')) + scale_fill_manual(values=c(colors[[i]],'bisque4')) + labs(y = 'Mean of pearson correlations per lineage', title = i))
+  dev.off()
+  
+  # Save outputs
+  save(ind, pearson_list, pearson_rand_list, z_mean_pearson, pval_mean_pearson, z_wmean_pearson, pval_wmean_pearson,  wilcox_pval, file = paste0('clone_similarity/',i,'_sim_results_min_lin_size_',min_lin_size,'.RData'))
+  
+  # Add to a vector that has the number of significant simulations
+  sig_sims_wilcox[[i]] <- sum(wilcox_pval <= 0.05)
+  
+  rm(ind, pearson_list, pearson_rand_list, z_mean_pearson, pval_mean_pearson, z_wmean_pearson, pval_wmean_pearson,  wilcox_pval)
+}
+
+write.xlsx(sig_sims_wilcox, file = paste0('clone_similarity/num_sig_sim_results_min_lin_size_',min_lin_size,'.xlsx'))
+```

@@ -1,0 +1,201 @@
+---
+title: "Endstate_clonal_differences"
+output: html_document
+date: "2024-02-27"
+---
+
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+`%nin%` = Negate(`%in%`)
+num_lin = 5
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B',
+           'super' = '#FF0000')
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Make all_naive object
+```{r, include=FALSE}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+all_naive <- subset(all_data, idents = 'naive')
+all_naive <- all_naive %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(all_naive)
+```
+
+# Find the number of cells per clone in single-cell data and make into a dataframe
+```{r, include=FALSE}
+clones_df <- data.frame(matrix(ncol = 1, nrow = 1))
+colnames(clones_df) <- 'Lineage'
+
+for (i in unique(all_data$OG_condition)){
+  temp_df <- as.data.frame(table(all_data$assigned_lineage[all_data$OG_condition == i]))
+  colnames(temp_df) <- c('Lineage', i)
+  clones_df <-merge(clones_df, temp_df, all = T)
+  rm(temp_df)
+}
+```
+
+# Begin plotting the top clones on each UMAP
+```{r, include=FALSE}
+pdf('Endstate_clonal_differences/top_clones_on_cond_specific_UMAPs.pdf')
+# Print the naive umap
+DimPlot(all_naive, pt.size = 3)
+
+# Dab
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+dab <- subset(all_data, idents = 'dab')
+dab <- dab %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>%   RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(dab, pt.size = 3)
+DimPlot(dab, group.by = 'OG_condition', pt.size = 3, sizes.highlight = 3,
+        cells.highlight = list("lin1" = colnames(dab)[dab$assigned_lineage %in% clones_df[order(clones_df[['dab']], decreasing = TRUE)[6],]$Lineage],
+                               "lin2" = colnames(dab)[dab$assigned_lineage %in% clones_df[order(clones_df[['dab']], decreasing = TRUE)[14],]$Lineage],
+                               "lin3" = colnames(dab)[dab$assigned_lineage %in% clones_df[order(clones_df[['dab']], decreasing = TRUE)[5],]$Lineage]),
+        cols.highlight = c('blue', 'cyan','deepskyblue'))
+
+#Tram
+tram <- subset(all_data, idents = 'tram')
+tram <- tram %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>%   RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(tram, pt.size = 3)
+DimPlot(tram, group.by = 'OG_condition', pt.size = 3, sizes.highlight = 3,
+         cells.highlight = list("lin1" = colnames(tram)[tram$assigned_lineage %in% clones_df[order(clones_df[['tram']], decreasing = TRUE)[5],]$Lineage],
+                                "lin2" = colnames(tram)[tram$assigned_lineage %in% clones_df[order(clones_df[['tram']], decreasing = TRUE)[2],]$Lineage],
+                                "lin3" = colnames(tram)[tram$assigned_lineage %in% clones_df[order(clones_df[['tram']], decreasing = TRUE)[3],]$Lineage]),
+         cols.highlight = c('deeppink', 'plum1','palevioletred'))
+
+#CoCl2
+cocl2 <- subset(all_data, idents = 'cocl2')
+cocl2 <- cocl2 %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>%   RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(cocl2, pt.size = 3)
+DimPlot(cocl2, group.by = 'OG_condition', pt.size = 3, sizes.highlight = 3, shuffle = T,
+         cells.highlight = list("lin1" = colnames(cocl2)[cocl2$assigned_lineage %in% clones_df[order(clones_df[['cocl2']], decreasing = TRUE)[4],]$Lineage],
+                                "lin2" = colnames(cocl2)[cocl2$assigned_lineage %in% clones_df[order(clones_df[['cocl2']], decreasing = TRUE)[2],]$Lineage],
+                                "lin3" = colnames(cocl2)[cocl2$assigned_lineage %in% clones_df[order(clones_df[['cocl2']], decreasing = TRUE)[1],]$Lineage]),
+         cols.highlight = c('darkgreen', 'chartreuse1','olivedrab'))
+
+#cis
+cis <- subset(all_data, idents = 'cis')
+cis <- cis %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>%   RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(cis, pt.size = 3)
+DimPlot(cis, group.by = 'OG_condition', pt.size = 3, sizes.highlight = 3,
+         cells.highlight = list("lin1" = colnames(cis)[cis$assigned_lineage %in% clones_df[order(clones_df[['cis']], decreasing = TRUE)[1],]$Lineage],
+                                "lin2" = colnames(cis)[cis$assigned_lineage %in% clones_df[order(clones_df[['cis']], decreasing = TRUE)[2],]$Lineage],
+                                "lin3" = colnames(cis)[cis$assigned_lineage %in% clones_df[order(clones_df[['cis']], decreasing = TRUE)[3],]$Lineage]),
+         cols.highlight = c('darkgoldenrod2','khaki','darkgoldenrod4'))
+
+#dox
+dox <- subset(all_data, idents = 'dox')
+dox <- dox %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>%   RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(dox, pt.size = 3)
+DimPlot(dox, group.by = 'OG_condition', pt.size = 3, sizes.highlight = 3,
+         cells.highlight = list("lin1" = colnames(dox)[dox$assigned_lineage %in% clones_df[order(clones_df[['dox']], decreasing = TRUE)[6],]$Lineage],
+                                "lin2" = colnames(dox)[dox$assigned_lineage %in% clones_df[order(clones_df[['dox']], decreasing = TRUE)[3],]$Lineage],
+                                "lin3" = colnames(dox)[dox$assigned_lineage %in% clones_df[order(clones_df[['dox']], decreasing = TRUE)[1],]$Lineage]),
+         cols.highlight = c('magenta4','maroon', 'magenta1'))
+
+#acid
+acid <- subset(all_data, idents = 'acid')
+acid <- acid %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>%   RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(acid, pt.size = 3)
+DimPlot(acid, group.by = 'OG_condition', pt.size = 3, sizes.highlight = 3,
+         cells.highlight = list("lin1" = colnames(acid)[acid$assigned_lineage %in% clones_df[order(clones_df[['acid']], decreasing = TRUE)[1],]$Lineage],
+                                "lin2" = colnames(acid)[acid$assigned_lineage %in% clones_df[order(clones_df[['acid']], decreasing = TRUE)[7],]$Lineage],
+                                "lin3" = colnames(acid)[acid$assigned_lineage %in% clones_df[order(clones_df[['acid']], decreasing = TRUE)[3],]$Lineage]),
+         cols.highlight = c('red2','orange', 'darkorange4'))
+dev.off()
+```
+# Do differential gene expression on top clones
+```{r, include=FALSE}
+list_top_clones <- list()
+list_markers <- list()
+# Run on a condition by condition basis. Find differentially expressed genes on top 20 lineages. Maybe then do clustering?
+for (i in c('dab','tram','cocl2','acid','cis','dox')){
+  list_markers[[i]] <- list()
+  temp <- c()
+  temp_seur <- get(i)
+  Idents(temp_seur) <- temp_seur$assigned_lineage
+  for (j in clones_df[order(clones_df[[i]], decreasing = TRUE)[1:20],]$Lineage){
+    temp <- c(temp,j)
+    list_markers[[i]][[j]] <- FindMarkers(temp_seur, j, only.pos = T)
+  }
+  list_top_clones[[i]] <- temp
+}
+
+save(list_markers,list_top_clones, file = 'Endstate_clonal_differences/diff_object.RData')
+load('Endstate_clonal_differences/diff_object.RData')
+rm(list_top_clones)
+```
+
+# Plot heatmaps of gene expression colored by clone
+```{r}
+pdf('Endstate_clonal_differences/heatmaps.pdf',20,20)
+list_dfs <- list()
+for (i in names(list_markers)){
+  for(j in names(list_markers[[i]])){
+    list_markers[[i]][[j]]$gene <- rownames(list_markers[[i]][[j]])
+    list_markers[[i]][[j]]$clone <- j
+  }
+  list_dfs[[i]] <- bind_rows(list_markers[[i]])
+  list_dfs[[i]] %>%
+    group_by(clone) %>%
+    dplyr::filter(avg_log2FC > .75) %>%
+    slice_head(n = 20) %>%
+    ungroup() -> top20
+  temp_seur <- get(i)
+  Idents(temp_seur) <- temp_seur$assigned_lineage
+  temp_seur <- subset(temp_seur, idents = clones_df[order(clones_df[[i]], decreasing = TRUE)[1:20],]$Lineage)
+  print(DoHeatmap(temp_seur, features = top20$gene, label = F))
+}
+dev.off()
+
+
+```
+
+```{r}
+pdf('Endstate_clonal_differences/fivetotwenty_heatmaps.pdf',20,20)
+list_dfs <- list()
+for (i in names(list_markers)){
+  for(j in names(list_markers[[i]][5:20])){
+    list_markers[[i]][[j]]$gene <- rownames(list_markers[[i]][[j]])
+    list_markers[[i]][[j]]$clone <- j
+  }
+  list_dfs[[i]] <- bind_rows(list_markers[[i]])
+  list_dfs[[i]] %>%
+    group_by(clone) %>%
+    dplyr::filter(avg_log2FC > .75) %>%
+    slice_head(n = 20) %>%
+    ungroup() -> top20
+  temp_seur <- get(i)
+  Idents(temp_seur) <- temp_seur$assigned_lineage
+  temp_seur <- subset(temp_seur, idents = clones_df[order(clones_df[[i]], decreasing = TRUE)[5:20],]$Lineage)
+  print(DoHeatmap(temp_seur, features = top20$gene, label = F))
+}
+dev.off()
+
+
+```
+

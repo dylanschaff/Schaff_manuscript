@@ -1,0 +1,171 @@
+---
+title: "Find_Markers_Top_Res_lins_in_naive"
+output: html_document
+date: "2023-05-23"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+#knitr::opts_knit$set(root.dir = '/Users/phoebewhite/Library/CloudStorage/GoogleDrive-phoebewhite@sydshafferlab.com/.shortcut-targets-by-id/1jTEIOfrKhnb_l5390zZHfgBXhT77dXPF/Schaff_Shared/Cloud/Schaff_paper') # for phoebe
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(fgsea)
+`%nin%` = Negate(`%in%`)
+num_lin = 5
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Make all_naive object
+```{r, include=FALSE}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+all_naive <- subset(all_data, idents = 'naive')
+all_naive <- all_naive %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+```
+
+# Find the number of cells per clone in single-cell data and make into a dataframe
+```{r, include=FALSE}
+clones_df <- data.frame(matrix(ncol = 1, nrow = 1))
+colnames(clones_df) <- 'Lineage'
+
+for (i in unique(all_data$OG_condition)){
+  temp_df <- as.data.frame(table(all_data$assigned_lineage[all_data$OG_condition == i]))
+  colnames(temp_df) <- c('Lineage', i)
+  clones_df <-merge(clones_df, temp_df, all = T)
+  rm(temp_df)
+}
+```
+
+# Make a named character vector with plotting colors for each resistant condition
+```{r, include=FALSE}
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B')
+```
+
+# Plot top lineages on naive UMAP and identify markers
+```{r,include=FALSE}
+list_markers <- list()
+list_markers_up <- list()
+for (i in c('dab','tram','cis','dox','cocl2','acid')){
+  pdf(paste0('Find_Markers_Top_Res_lins_in_naive/top_',i,'_lineages_on_naive.pdf'))
+  lins_highlight <- clones_df[order(clones_df[[i]], decreasing = TRUE)[1:num_lin],]$Lineage
+  print(DimPlot(all_naive, reduction = "umap", dims = c(1,2), group.by = 'OG_condition',sizes.highlight = 5, pt.size = 2,
+          cells.highlight = list(colnames(all_naive)[all_naive$assigned_lineage %in% lins_highlight]),
+          cols.highlight = colors[i]) + ggtitle(paste('naive, Num cells:', length(list(colnames(all_naive)[all_naive$assigned_lineage %in% lins_highlight])[[1]]))))
+  list_markers[[i]] <- FindMarkers(all_naive, 
+              ident.1 = colnames(all_naive)[all_naive$assigned_lineage %in% lins_highlight],
+              ident.2 = colnames(all_naive)[-which(all_naive$assigned_lineage %in% lins_highlight)],
+              random.seed = 1)
+  list_markers_up[[i]] <- rownames(list_markers[[i]])[list_markers[[i]]$avg_log2FC >= 0.25 & list_markers[[i]]$p_val <= 0.05]
+  for (j in list_markers_up[[i]]){
+    print(FeaturePlot(all_naive, features = j, order = T, pt.size = 2) + scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme())
+  }
+  dev.off()
+}
+markers_3plus <- names(table(unlist(list_markers_up))[table(unlist(list_markers_up))>=3])
+```
+
+# Save the outputs to text files
+```{r, include=FALSE}
+for (i in names(list_markers_up)){
+  print(i)
+  write.csv(list_markers_up[[i]], paste0('Find_Markers_Top_Res_lins_in_naive/',i,'_markers.csv'))
+}
+write.csv(markers_3plus, 'Find_Markers_Top_Res_lins_in_naive/markers_in_three_or_more.csv')
+save(list_markers, list_markers_up, file = 'Find_Markers_Top_Res_Lins_in_naive/marker_lists.RData')
+load('Find_Markers_Top_Res_Lins_in_naive/marker_lists.RData')
+markers_3plus <- read.csv('Find_Markers_Top_Res_lins_in_naive/markers_in_three_or_more.csv')
+```
+
+# Plot the genes that are up in at least three conditions
+```{r}
+pdf('Find_Markers_Top_Res_lins_in_naive/markers_3plus_on_naive.pdf')
+for (j in markers_3plus){
+  print(FeaturePlot(all_naive, features = j, order = T, pt.size = 2) + scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme())
+}
+dev.off()
+``` 
+
+
+# Do fgsea
+```{r}
+# Load in the GO pathways downloaded from MSigDB
+human_gene_sets <- readLines('Find_Markers_Top_Res_lins_in_naive/h.all.v2023.2.Hs.symbols.gmt.txt')
+human_gene_sets <- strsplit(human_gene_sets,'\t')
+
+Hs.H <- list()
+for(i in 1:length(human_gene_sets)){
+  Hs.H[[human_gene_sets[[i]][1]]] <- as.character(human_gene_sets[[i]][3:length(human_gene_sets[[i]])])
+}
+
+# Do fgsea
+fgsea_list <-list()
+for(i in names(list_markers)){
+  ranks <- list_markers[[i]]$avg_log2FC
+  names(ranks) <- rownames(list_markers[[i]])
+  ranks <- sort(ranks, decreasing = T)
+  
+  fgsea_list[[i]] <- fgsea(Hs.H, ranks, minSize=5, maxSize = 500)
+}
+
+# Plot results
+pdf('Find_Markers_Top_Res_lins_in_naive/fgsea.pdf')
+for(i in names(fgsea_list)){
+  print(ggplot(fgsea_list[[i]], aes(reorder(pathway,NES), NES)) +
+          geom_col(aes(fill=padj<0.05)) +
+          coord_flip()+
+          labs(x = 'Pathway', y = 'Normalized Enrichment Score',
+               title = i)+ 
+          theme_minimal())
+}
+dev.off()
+
+```
+
+# Make a list of all the genes to look them up
+```{r}
+
+load('Find_Markers_Top_Res_lins_in_naive/marker_lists.RData')
+
+whole_list <- unlist(list_markers_up)
+
+whole_list_not_repeated <- whole_list[duplicated(whole_list) == F]
+
+write.csv(whole_list_not_repeated, file='Find_Markers_Top_Res_lins_in_naive/whole_list.csv')
+
+```
+
+# Save upregulated predictive genes of each treatment into excel
+```{r}
+write.xlsx(list_markers_up$dab, file="Find_Markers_Top_Res_lins_in_naive/Supplementary_Table1_upregulated_predictive_genes.xlsx", sheetName="Dabrafenib", row.names=FALSE)
+write.xlsx(list_markers_up$tram, file="Find_Markers_Top_Res_lins_in_naive/Supplementary_Table1_upregulated_predictive_genes.xlsx", sheetName="Trametinib", append=TRUE, row.names=FALSE)
+write.xlsx(list_markers_up$cocl2, file="Find_Markers_Top_Res_lins_in_naive/Supplementary_Table1_upregulated_predictive_genes.xlsx", sheetName="CoCl2", append=TRUE, row.names=FALSE)
+write.xlsx(list_markers_up$acid, file="Find_Markers_Top_Res_lins_in_naive/Supplementary_Table1_upregulated_predictive_genes.xlsx", sheetName="Acid", append=TRUE, row.names=FALSE)
+write.xlsx(list_markers_up$cis, file="Find_Markers_Top_Res_lins_in_naive/Supplementary_Table1_upregulated_predictive_genes.xlsx", sheetName="Cisplatin", append=TRUE, row.names=FALSE)
+write.xlsx(list_markers_up$dox, file="Find_Markers_Top_Res_lins_in_naive/Supplementary_Table1_upregulated_predictive_genes.xlsx", sheetName="Doxorubicin", append=TRUE, row.names=FALSE)
+```
+
+
+

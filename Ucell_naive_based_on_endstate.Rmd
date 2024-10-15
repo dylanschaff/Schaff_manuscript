@@ -1,0 +1,84 @@
+---
+title: "Ucell_naive_based_on_endstate"
+output: html_document
+date: "2023-05-03"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(UCell)
+`%nin%` = Negate(`%in%`)
+
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B',
+           'super' = '#FF0000')
+```
+
+# Load in the all_data object and the marker lists based on endstate
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+load('naive_vs_each_endstate/results.RData')
+```
+
+# Subset out the naive data
+```{r,include=FALSE}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+all_naive <- subset(all_data, idents = 'naive')
+all_naive <- all_naive %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+```
+
+# Plot the Ucell scores from each condition on the UMAP - based on the endstate resistant genes
+```{r,include=FALSE}
+list_genesets <- list()
+for (i in names(diff_markers)){
+  list_genesets[[i]] <- diff_markers[[i]]$gene[diff_markers[[i]]$avg_log2FC > .75]
+}
+list_genesets$all <- venn_data$`acid:cocl2:dab:tram:cis:dox`
+list_genesets$not_cis <- venn_data$`acid:cocl2:dab:tram:dox`
+list_genesets$not_acid <- venn_data$`cocl2:dab:tram:cis:dox`
+
+all_naive <- AddModuleScore_UCell(all_naive, features = list_genesets)
+signature.names <- paste0(names(list_genesets), "_UCell")
+
+pdf('Ucell_naive_based_on_endstate/UCells_on_UMAPs.pdf')
+
+for (i in signature.names){
+  print(FeaturePlot(all_naive, features = i, order = T) + scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme())
+}
+
+dev.off()
+
+```
+
+# Plot the Ucell scores on the seurat clusters
+```{r,include=FALSE}
+pdf('Ucell_naive_based_on_endstate/UCells_on_clusters.pdf')
+
+for (i in signature.names){
+  print(VlnPlot(all_naive, features = i, group.by = "seurat_clusters"))
+}
+
+dev.off()
+
+save(list_genesets, file = 'Ucell_naive_based_on_endstate/list_genesets.RData')
+```

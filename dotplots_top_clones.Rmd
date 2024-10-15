@@ -1,0 +1,140 @@
+---
+title: "dotplots_top_clones"
+output: html_document
+date: "2023-04-17"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(tidyverse)
+`%nin%` = Negate(`%in%`)
+num_lin = 750
+```
+
+# Make a named character vector with plotting colors for each resistant condition
+```{r, include=FALSE}
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B',
+           'super' = '#FF0000')
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Find the number of cells per clone in single-cell data and make into a dataframe
+```{r, include=FALSE}
+clones_df <- data.frame(matrix(ncol = 1, nrow = 1))
+colnames(clones_df) <- 'Lineage'
+
+for (i in unique(all_data$OG_condition)){
+  temp_df <- as.data.frame(table(all_data$assigned_lineage[all_data$OG_condition == i]))
+  colnames(temp_df) <- c('Lineage', i)
+  clones_df <-merge(clones_df, temp_df, all = T)
+  rm(temp_df)
+}
+
+
+```
+
+# Make dotplot of top lineages sorted by each condition
+```{r}
+pdf('dotplots_top_clones/dotplots.pdf', height = 20, width = 5)
+
+for (i in c('naive','dab','tram','cis','dox','cocl2','acid')){
+  plot_df <- clones_df[order(clones_df[[i]], decreasing = TRUE)[1:num_lin],]
+  long_plot_df <- plot_df %>%pivot_longer(
+     cols = c(2:ncol(plot_df)), 
+     names_to = "condition",
+     values_to = "cells"
+ )
+  long_plot_df[is.na(long_plot_df)] <- 0
+  long_plot_df$Lineage <- factor(long_plot_df$Lineage,long_plot_df$Lineage[long_plot_df$condition==i][order(long_plot_df$cells[long_plot_df$condition==i], decreasing = F)])
+  long_plot_df$condition <- factor(long_plot_df$condition, levels = c('naive','dab','tram','cis','dox','cocl2','acid'))
+  print(ggplot(long_plot_df, aes(x = condition, y = Lineage, size = cells, fill = condition)) + 
+  geom_point( alpha = 0.75, shape = 21) + scale_size(range = c(.1, 24)) + theme(legend.key=element_blank()) + labs(x= "", y = "", size = "lineage size", fill = "", title = paste('sorted by', i))+ scale_fill_manual(values=colors))
+}
+
+# Plot based on overall averages
+plot_df <- clones_df[order(rowSums(clones_df[2:8]), decreasing = TRUE)[1:num_lin],]
+  long_plot_df <- plot_df %>%pivot_longer(
+     cols = c(2:ncol(plot_df)), 
+     names_to = "condition",
+     values_to = "cells")
+long_plot_df[is.na(long_plot_df)] <- 0
+  long_plot_df$condition <- factor(long_plot_df$condition, levels = c('naive','dab','tram','cis','dox','cocl2','acid'))
+  print(ggplot(long_plot_df, aes(x = condition, y = Lineage, size = cells, fill = condition)) + 
+  geom_point( alpha = 0.75, shape = 21) + scale_size(range = c(.1, 24)) + theme(legend.key=element_blank()) + labs(x= "", y = "", size = "lineage size", fill = "", title ='overall averages')+ scale_fill_manual(values=colors))
+
+dev.off()
+```
+
+# Correlate the different treatments with untreated
+```{r}
+correlations <- c()
+for (i in c('dab','tram','cocl2','acid','cis','dox')){
+  n <- plot_df$naive
+  is.na(n) <- 0
+  c <- plot_df[[i]]
+  is.na(c) <- 0
+  correlations <- c(correlations, cor(log2(n+1), log2(c+1), use = "complete.obs"))
+}
+
+names(correlations) <- c('dab','tram','cocl2','acid','cis','dox')
+
+write.csv(correlations, file = 'dotplots_top_clones/correlations.csv')
+```
+
+
+# Make dotplot of top lineages sorted by each condition - log scaled
+```{r}
+pdf('dotplots_top_clones/dotplots_log_scaled.pdf', height = 20, width = 5)
+
+for (i in c('naive','dab','tram','cis','dox','cocl2','acid')){
+  plot_df <- clones_df[order(clones_df[[i]], decreasing = TRUE)[1:num_lin],]
+  long_plot_df <- plot_df %>%pivot_longer(
+     cols = c(2:ncol(plot_df)), 
+     names_to = "condition",
+     values_to = "cells"
+ )
+  long_plot_df[is.na(long_plot_df)] <- 0
+  long_plot_df$Lineage <- factor(long_plot_df$Lineage,long_plot_df$Lineage[long_plot_df$condition==i][order(long_plot_df$cells[long_plot_df$condition==i], decreasing = F)])
+  long_plot_df$condition <- factor(long_plot_df$condition, levels = c('naive','dab','tram','cis','dox','cocl2','acid'))
+  print(ggplot(long_plot_df, aes(x = condition, y = Lineage, size = log2(cells), fill = condition)) + 
+  geom_point( alpha = 0.75, shape = 21) + scale_size(range = c(.1, 10)) + theme(legend.key=element_blank()) + labs(x= "", y = "", size = "log scaled lineage size", fill = "", title = paste('sorted by', i))+ scale_fill_manual(values=colors))
+}
+
+# Plot based on overall averages
+plot_df <- clones_df[order(rowSums(clones_df[2:8]), decreasing = TRUE)[1:num_lin],]
+  long_plot_df <- plot_df %>%pivot_longer(
+     cols = c(2:ncol(plot_df)), 
+     names_to = "condition",
+     values_to = "cells")
+long_plot_df[is.na(long_plot_df)] <- 0
+  long_plot_df$condition <- factor(long_plot_df$condition, levels = c('naive','dab','tram','cis','dox','cocl2','acid'))
+  print(ggplot(long_plot_df, aes(x = condition, y = Lineage, size = log2(cells), fill = condition)) + 
+  geom_point( alpha = 0.75, shape = 21) + scale_size(range = c(.1, 10)) + theme(legend.key=element_blank()) + labs(x= "", y = "", size = "log scaled lineage size", fill = "", title ='overall averages')+ scale_fill_manual(values=colors))
+
+dev.off()
+```

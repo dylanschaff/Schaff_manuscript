@@ -1,0 +1,72 @@
+---
+title: "DLS083_plotting"
+output: html_document
+date: "2024-05-23"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+rm(list = ls())
+gc()
+library(ggplot2)
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+colors = c('Acid' = '#F57F20',
+           'CoCl2' = '#00AB50',
+           'Dab' = '#00B1D9',
+           'Tram' = '#EB81B4',
+           'Cis' = '#BEA733',
+           'Dox' = '#8B008B')
+```
+
+# Build the data frame
+```{r include=FALSE}
+list_files <- list.files('Data/DLS083_incucyte_data/Images', pattern = 'areas', full.names = T)
+areas <- read.csv(list_files[1])
+for (i in 2: length(list_files)){
+  areas <- rbind(areas, read.csv(list_files[i]))
+}
+# Remove the blanks and the first rows
+areas <- areas[,-1]
+areas <- areas[-which(areas$Condition == 'Blank'),]
+
+areas$Plate <- sapply(areas$Condition, function(x) strsplit(x,'_')[[1]][2])
+areas$Well <- sapply(areas$Condition, function(x) strsplit(x,'_')[[1]][4])
+areas$Time <- as.numeric(substr(sapply(areas$Condition, function(x) strsplit(x,'_')[[1]][6]),1,2))
+
+areas$Treatment <- NA
+for (j in 1:nrow(areas)){
+  if (areas$Plate[[j]] == 'Plate1' & areas$Well[[j]] %in% c('A1','B1')){
+    areas$Treatment[[j]] <- 'Dab'
+  } else if (areas$Plate[[j]] == 'Plate1' & areas$Well[[j]] %in% c('A2','B2')){
+    areas$Treatment[[j]] <- 'Tram'
+  } else if (areas$Plate[[j]] == 'Plate1' & areas$Well[[j]] %in% c('A3','B3')){
+    areas$Treatment[[j]] <- 'CoCl2'
+  } else if (areas$Plate[[j]] == 'Plate2' & areas$Well[[j]] %in% c('A1','B1')){
+    areas$Treatment[[j]] <- 'Cis'
+  } else if (areas$Plate[[j]] == 'Plate2' & areas$Well[[j]] %in% c('A2','B2')){
+    areas$Treatment[[j]] <- 'Dox'
+  } else if (areas$Plate[[j]] == 'Plate2' & areas$Well[[j]] %in% c('A3','B3')){
+    areas$Treatment[[j]] <- 'Acid'
+  }
+}
+```
+
+# Plot the data, one treatment at a time
+```{r}
+pdf('incucyte_analysis/growth_plots_by_cond.pdf')
+for ( z in unique(areas$Treatment)){
+  print(ggplot(areas[areas$Treatment == z,], aes(x = Time, y = Cell_area, group = Well, color = Treatment)) +geom_point() + geom_line() + scale_color_manual(values = colors) + ggtitle(z))
+}
+print(ggplot(areas, aes(x = Time, y = Cell_area, group = Well, color = Treatment)) +geom_point()  + scale_color_manual(values = colors) + ggtitle('All data together'))
+dev.off()
+
+areas$PlateWell <- paste0(areas$Plate,'_', areas$Well)
+pdf('incucyte_analysis/growth_plots_by_cond_same_axes.pdf')
+for ( z in unique(areas$Treatment)){
+  print(ggplot(areas[areas$Treatment == z,], aes(x = Time, y = Cell_area, group = Well, color = Treatment)) +geom_point() + geom_line() + scale_color_manual(values = colors) + ggtitle(z) + ylim(0,15000000))
+}
+print(ggplot(areas) +geom_point(aes(x = Time, y= Cell_area, color = Treatment, group = Treatment))  + scale_color_manual(values = colors) + ggtitle('All data together') + geom_line(aes(x = Time, y = Cell_area, group = PlateWell, color = Treatment)))
+dev.off()
+```
+

@@ -1,0 +1,105 @@
+---
+title: "plot_top_resistant_lins_on_UMAPs"
+output: html_document
+date: "2023-05-17"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(tidyverse)
+`%nin%` = Negate(`%in%`)
+num_lin <- 5
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B',
+           'super' = '#FF0000')
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Subset out the naive data
+```{r,include=FALSE}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+all_naive <- subset(all_data, idents = 'naive')
+all_naive <- all_naive %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+```
+
+# Find the number of cells per clone in single-cell data and make into a dataframe
+```{r, include=FALSE}
+clones_df <- data.frame(matrix(ncol = 1, nrow = 1))
+colnames(clones_df) <- 'Lineage'
+
+for (i in unique(all_data$OG_condition)){
+  temp_df <- as.data.frame(table(all_data$assigned_lineage[all_data$OG_condition == i]))
+  colnames(temp_df) <- c('Lineage', i)
+  clones_df <-merge(clones_df, temp_df, all = T)
+  rm(temp_df)
+}
+```
+
+# Plot the top lineages on umap
+```{r}
+pdf(paste0('plot_top_resistant_lins_on_UMAPs/top_',num_lin,'lins_on_UMAPs.pdf'))
+for (i in c('dab','tram','cis','dox','cocl2','acid')){
+  lins_highlight <- clones_df[order(clones_df[[i]], decreasing = TRUE)[1:num_lin],]$Lineage
+  print(DimPlot(all_data, reduction = "umap", dims = c(1,2), group.by = 'OG_condition', pt.size = .1,
+          cells.highlight = list(colnames(all_data)[all_data$assigned_lineage %in% lins_highlight]),
+          cols.highlight = colors[i]) + ggtitle(i))
+}
+dev.off()
+```
+
+# Plot only the cells from the top clones
+```{r}
+pdf(paste0('plot_top_resistant_lins_on_UMAPs/top_',num_lin,'lins_on_filtered_UMAPs.pdf'))
+print(DimPlot(all_data, cols = colors) + xlim(-10,15) + ylim(-12,12))
+for(i in c('dab','tram','cis','dox','cocl2','acid')){
+  lins_highlight <- clones_df[order(clones_df[[i]], decreasing = TRUE)[1:num_lin],]$Lineage
+  t <- subset(all_data, cells = colnames(all_data)[all_data$assigned_lineage %in% lins_highlight])
+  print(DimPlot(t, cols = colors) + xlim(-10,15) + ylim(-12,12))
+}
+dev.off()
+
+pdf(paste0('plot_top_resistant_lins_on_UMAPs/CD44_on_filtered_UMAPs.pdf'))
+FeaturePlot(t, 'CD44', pt.size = 1) + DarkTheme() + scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu')))  + xlim(-10,15) + ylim(-12,12)
+dev.off()
+```
+
+# Make pie charts of cells in which conditions
+```{r}
+pdf(paste0('plot_top_resistant_lins_on_UMAPs/piecharts_top_lins.pdf'))
+for(i in c('dab','tram','cis','dox','cocl2','acid')){
+ for(j in clones_df[order(clones_df[[i]], decreasing = TRUE)[1:(2*num_lin)],]$Lineage){
+   t <- subset(all_data, cells = colnames(all_data)[all_data$assigned_lineage == j & all_data$OG_condition %in% c('dab','tram','cis','dox','cocl2','acid')])
+   table <- as.data.frame(table(t$OG_condition))
+   print(ggplot(table, aes(x="", y=Freq, fill=Var1)) +
+  geom_bar(stat="identity", width=1, color = 'white') +
+  coord_polar("y", start=0)+theme_void() + scale_fill_manual(values = colors) + ggtitle(paste(i,'resistant',j)))
+ }
+  
+}
+dev.off()
+```
+

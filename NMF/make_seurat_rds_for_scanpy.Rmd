@@ -1,0 +1,230 @@
+---
+title: "make_seurat_rds_for_scanpy"
+output: html_document
+date: "2024-03-28"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(reticulate)
+library(SeuratDisk)
+`%nin%` = Negate(`%in%`)
+num_lin =5
+colors = c('naive' = '#D3D3D3',
+           'acid' = '#F57F20',
+           'cocl2' = '#00AB50',
+           'dab' = '#00B1D9',
+           'tram' = '#EB81B4',
+           'cis' = '#BEA733',
+           'dox' = '#8B008B',
+           'super' = '#FF0000')
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Save the all_data in scanpy format
+```{r}
+all_seu <- DietSeurat(all_data,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(all_data@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(all_seu@meta.data, is.factor)
+all_seu@meta.data[i] <- lapply(all_seu@meta.data[i], as.character)
+
+SaveH5Seurat(all_seu, filename = "NMF/all_data.h5Seurat", overwrite = T)
+Convert("NMF/all_data.h5Seurat", dest = "NMF/all_data.h5ad", overwrite = T)
+```
+
+
+# Make all_naive object and save for scanpy
+```{r}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to all_naive
+all_naive <- subset(all_data, idents = 'naive')
+all_naive <- all_naive %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(all_naive)
+
+naive_seu <- DietSeurat(all_naive,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(all_naive@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(naive_seu@meta.data, is.factor)
+naive_seu@meta.data[i] <- lapply(naive_seu@meta.data[i], as.character)
+
+SaveH5Seurat(naive_seu, filename = "NMF/naive.h5Seurat", overwrite = T)
+Convert("NMF/naive.h5Seurat", dest = "NMF/naive.h5ad", overwrite = T)
+```
+
+# Make dab object and save for scanpy
+```{r}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+dab <- subset(all_data, idents = 'dab')
+dab <- dab %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(dab)
+
+dab_seu <- DietSeurat(dab,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(dab@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(dab_seu@meta.data, is.factor)
+dab_seu@meta.data[i] <- lapply(dab_seu@meta.data[i], as.character)
+
+SaveH5Seurat(dab_seu, filename = "NMF/dab.h5Seurat", overwrite = T)
+Convert("NMF/dab.h5Seurat", dest = "NMF/dab.h5ad", overwrite = T)
+```
+
+# Make tram object and save for scanpy
+```{r}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to tramtram
+tram <- subset(all_data, idents = 'tram')
+tram <- tram %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(tram)
+
+tram_seu <- DietSeurat(tram,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(tram@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(tram_seu@meta.data, is.factor)
+tram_seu@meta.data[i] <- lapply(tram_seu@meta.data[i], as.character)
+
+SaveH5Seurat(tram_seu, filename = "NMF/tram.h5Seurat", overwrite = T)
+Convert("NMF/tram.h5Seurat", dest = "NMF/tram.h5ad", overwrite = T)
+```
+
+# Make cis object and save for scanpy
+```{r}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to ciscis
+cis <- subset(all_data, idents = 'cis')
+cis <- cis %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(cis)
+
+cis_seu <- DietSeurat(cis,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(cis@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(cis_seu@meta.data, is.factor)
+cis_seu@meta.data[i] <- lapply(cis_seu@meta.data[i], as.character)
+
+SaveH5Seurat(cis_seu, filename = "NMF/cis.h5Seurat", overwrite = T)
+Convert("NMF/cis.h5Seurat", dest = "NMF/cis.h5ad", overwrite = T)
+```
+
+# Make dox object and save for scanpy
+```{r}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to doxdox
+dox <- subset(all_data, idents = 'dox')
+dox <- dox %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(dox)
+
+dox_seu <- DietSeurat(dox,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(dox@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(dox_seu@meta.data, is.factor)
+dox_seu@meta.data[i] <- lapply(dox_seu@meta.data[i], as.character)
+
+SaveH5Seurat(dox_seu, filename = "NMF/dox.h5Seurat", overwrite = T)
+Convert("NMF/dox.h5Seurat", dest = "NMF/dox.h5ad", overwrite = T)
+```
+
+# Make cocl2 object and save for scanpy
+```{r}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to cocl2cocl2
+cocl2 <- subset(all_data, idents = 'cocl2')
+cocl2 <- cocl2 %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(cocl2)
+
+cocl2_seu <- DietSeurat(cocl2,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(cocl2@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(cocl2_seu@meta.data, is.factor)
+cocl2_seu@meta.data[i] <- lapply(cocl2_seu@meta.data[i], as.character)
+
+SaveH5Seurat(cocl2_seu, filename = "NMF/cocl2.h5Seurat", overwrite = T)
+Convert("NMF/cocl2.h5Seurat", dest = "NMF/cocl2.h5ad", overwrite = T)
+```
+
+# Make acid object and save for scanpy
+```{r}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to acidacid
+acid <- subset(all_data, idents = 'acid')
+acid <- acid %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+DimPlot(acid)
+
+acid_seu <- DietSeurat(acid,
+                        counts = T,
+                        data = T, 
+                        scale.data = T,
+                        features = rownames(acid@assays$RNA@scale.data),
+                        assays = 'RNA',
+                        dimreducs = c('pca','umap'),
+                        graphs = c('RNA_nn','RNA_snn'),
+                        misc = T)
+
+i <- sapply(acid_seu@meta.data, is.factor)
+acid_seu@meta.data[i] <- lapply(acid_seu@meta.data[i], as.character)
+
+SaveH5Seurat(acid_seu, filename = "NMF/acid.h5Seurat", overwrite = T)
+Convert("NMF/acid.h5Seurat", dest = "NMF/acid.h5ad", overwrite = T)
+```

@@ -1,0 +1,103 @@
+---
+title: "UCell_naive_states"
+output: html_document
+date: "2024-05-01"
+---
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(dplyr)
+library(Seurat)
+library(xlsx)
+library(ggplot2)
+library(RColorBrewer)
+library(kit)
+library(venn)
+library(UCell)
+library(viridis)
+`%nin%` = Negate(`%in%`)
+num_lin = 5
+```
+
+# Load in the all_data object
+```{r, include=FALSE}
+load('preprocess_cDNA_BCs/all_data_lineages.RData')
+```
+
+# Make all_naive object
+```{r, include=FALSE}
+Idents(all_data) <- all_data$OG_condition # Change the idents to the OG condition for subsetting to dabtram
+all_naive <- subset(all_data, idents = 'naive')
+all_naive <- all_naive %>% Seurat::NormalizeData(verbose = FALSE) %>% FindVariableFeatures(selection.method = "vst", nfeatures = 20000) %>%  ScaleData(verbose = FALSE) %>% RunPCA(verbose = FALSE) %>% FindNeighbors(dims = c(1:20)) %>% FindClusters(resolution = .5) %>% RunUMAP(dims = c(1:20))
+```
+
+# Find the number of cells per clone in single-cell data and make into a dataframe
+```{r, include=FALSE}
+clones_df <- data.frame(matrix(ncol = 1, nrow = 1))
+colnames(clones_df) <- 'Lineage'
+
+for (i in unique(all_data$OG_condition)){
+  temp_df <- as.data.frame(table(all_data$assigned_lineage[all_data$OG_condition == i]))
+  colnames(temp_df) <- c('Lineage', i)
+  clones_df <-merge(clones_df, temp_df, all = T)
+  rm(temp_df)
+}
+```
+
+# Add the UCell scores to the naive dataset
+```{r}
+load('Find_Markers_Top_Res_Lins_in_naive/marker_lists.RData')
+all_naive <- AddModuleScore_UCell(all_naive, features = list_markers_up)
+signature_names <- paste0(names(list_markers_up), "_UCell")
+
+pdf('UCell_naive_states/UCell_on_UMAP.pdf')
+DimPlot(all_naive, pt.size = 2)
+for (i in signature_names){
+  print(FeaturePlot(all_naive, features = i, order = T, pt.size = 2)+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme())
+}
+dev.off()
+```
+
+# Add the UCell scores to the naive dataset
+```{r}
+load('Find_Markers_Top_Res_Lins_in_naive/marker_lists.RData')
+all_naive <- AddModuleScore_UCell(all_naive, features = list_markers_up)
+signature_names <- paste0(names(list_markers_up), "_UCell")
+
+pdf('UCell_naive_states/UCell_on_PCA.pdf')
+DimPlot(all_naive, pt.size = 2, reduction = 'pca')
+for (i in signature_names){
+  print(FeaturePlot(all_naive, features = i, order = T, pt.size = 2, reduction = 'pca')+ scale_colour_gradientn(colors = rev(brewer.pal(n = 11, name = 'RdBu'))) +  DarkTheme())
+}
+dev.off()
+```
+
+# Plot UCell expression on violin plots
+```{r}
+pdf('UCell_naive_states/UCell_on_Seurat_clusters_Vln.pdf')
+DimPlot(all_naive, pt.size = 2, reduction = 'umap')
+for (i in signature_names){
+  print(VlnPlot(all_naive, features = i)+ stat_summary(fun = mean, shape = 95,, size = 10, color = 'red'))
+}
+print(VlnPlot(all_naive, features = 'CD44')+ stat_summary(fun = mean, shape = 95,, size = 10, color = 'red'))
+print(VlnPlot(all_naive, features = 'FN1')+ stat_summary(fun = mean, shape = 95,, size = 10, color = 'red'))
+dev.off()
+```
+
+# Try subclustering 
+```{r}
+t <- FindSubCluster(all_naive, 2, 'RNA_snn')
+Idents(t) <- t$sub.cluster
+DimPlot(t)
+VlnPlot(t, features = 'CD44')+ stat_summary(fun = mean, shape = 95,, size = 10, color = 'red')
+```
+
+

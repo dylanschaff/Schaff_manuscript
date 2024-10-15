@@ -1,0 +1,302 @@
+---
+title: "gDNA_overlaps"
+output: html_document
+date: "2024-08-01"
+---
+
+# Initialize
+```{r include=FALSE}
+rm(list = ls())
+gc()
+library(xlsx)
+library(ggplot2)
+library(venn)
+library(tidyverse)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+#Set working directory to appropriate folder for inputs and outputs on Google Drive
+```{r, setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = '/Users/dylanschaff/Library/CloudStorage/GoogleDrive-dyschaff@sydshafferlab.com/My Drive/Schaff_Shared/Cloud/Schaff_paper') # for dylan's laptop
+```
+
+# Load in the files
+```{r}
+# Load in all of the gDNA files
+temp <- list.files(path='Data/Sequencing_data/2021_05_21_DLS005_DLS004_gDNA_BCs_analysis/repo/analyzed',recursive = T, pattern='*.txt', full.names = T)
+myfiles <- lapply(temp, read.delim, header = F)
+list_names <- list.files(path='Data/Sequencing_data/2021_05_21_DLS005_DLS004_gDNA_BCs_analysis/repo/analyzed')
+names(myfiles) <- list_names
+
+# Filter out the other experiment and unnecessary conditions
+myfiles_filt <- myfiles[grepl('Cis|Dab|Tram|CoCl2|Dox|Acid', list_names) & grepl('DLS004', list_names)]
+list_names_filt <- list_names[grepl('Cis|Dab|Tram|CoCl2|Dox|Acid', list_names) & grepl('DLS004', list_names)]
+
+```
+
+# Get initial stats of each condition
+```{r}
+# Want to know the total # of barcodes with any reads in each condition and the total number of reads per conditon
+
+basic_stats_df <- data.frame()
+for (i in names(myfiles_filt)){
+  temp_df <- data.frame(Cond = i, Num_BCs = nrow(myfiles[[i]]), Num_reads = sum(myfiles[[i]]$V2))
+  basic_stats_df <- rbind(basic_stats_df,temp_df)
+}
+
+```
+
+# combine the technical replicates for the DLS004 splits
+```{r}
+# These are sequencing technical replicates for depth, so not RPM normalizing before combining
+
+# Also making a stats sheet that gives me confidence to be able to combine these two technical replicates
+
+is.odd <- function(x) x %% 2 != 0
+myfiles_filt_comb <- list() # New object with combined technical replicates
+between_rep_stats <- data.frame() # Stats on how much overlap there was after a VERY liberal filter for expression of a BC
+for (i in which(is.odd(which(substr(names(myfiles_filt),1,6) %in% 'DLS004')) == T)){
+  print(i)
+  temp_df <-merge(myfiles_filt[[i]],myfiles_filt[[i+1]], by='V1', all.x = T, all.y = T)
+  temp_df[is.na(temp_df)] <- 0
+  myfiles_filt_comb[[strsplit(names(myfiles_filt[i]), '_R')[[1]][1]]] <- data.frame(V1 = temp_df$V1, V2=temp_df$V2.x+temp_df$V2.y)
+  
+  rep1_greater1 <- myfiles_filt[[i]]$V1[myfiles_filt[[i]]$V2>1]
+  rep2_greater1 <- myfiles_filt[[i+1]]$V1[myfiles_filt[[i+1]]$V2>1]
+  num_int_reps <- length(intersect(rep1_greater1,rep2_greater1))
+  frac_rep1_int <- num_int_reps/length(rep1_greater1)
+  frac_rep2_int <- num_int_reps/length(rep2_greater1)
+  
+  rep1_greater1000 <- myfiles_filt[[i]]$V1[myfiles_filt[[i]]$V2>1000]
+  rep2_greater1000 <- myfiles_filt[[i+1]]$V1[myfiles_filt[[i+1]]$V2>1000]
+  num_int_reps_1000 <- length(intersect(rep1_greater1000,rep2_greater1000))
+  frac_rep1_int_1000 <- num_int_reps_1000/length(rep1_greater1000)
+  frac_rep2_int_1000 <- num_int_reps_1000/length(rep2_greater1000)
+  
+  temp_df2 <- data.frame(Condition = strsplit(names(myfiles_filt[i]), '_R')[[1]][1],
+                                       Number_intersecting_BCs = num_int_reps, 
+                                       Fraction_Rep1_BCs_intersecting = frac_rep1_int, 
+                                       Fraction_Rep2_BCs_intersecting = frac_rep2_int,
+                         Number_intersecting_BCs_1000 = num_int_reps_1000, 
+                         Fraction_Rep1_BCs_intersecting_1000 = frac_rep1_int_1000, 
+                         Fraction_Rep2_BCs_intersecting_1000 = frac_rep2_int_1000
+                         )
+  between_rep_stats <- rbind(between_rep_stats, temp_df2)
+}
+```
+
+# Combine the biological replicates by average across two technical replicates
+```{r}
+# These are biological replicates, so I am taking the average RPM across the two reps
+# define rpm_norm function  
+rpm_norm <- function(sample){
+  scaling_factor <- sum(sample)/1000000
+  reads_per_million <- as.numeric(sample/scaling_factor)
+  return(reads_per_million)
+}
+
+combined_data <- list() # Making a list of the 6 different treatment conditions with reads combined a
+for (i in which(is.odd(which(substr(names(myfiles_filt_comb),1,6) %in% 'DLS004')) == T)){
+  print(i)
+  temp_df <-merge(myfiles_filt_comb[[i]],myfiles_filt_comb[[i+1]], by='V1', all.x = T, all.y = T)
+  temp_df[is.na(temp_df)] <- 0
+  
+  combined_data[[strsplit(names(myfiles_filt_comb[i]), '_S')[[1]][1]]] <- data.frame(barcode = temp_df$V1, average_RPM=(rpm_norm(temp_df$V2.x)+rpm_norm(temp_df$V2.y))/2)
+}
+
+```
+
+
+
+# Make venn diagram of top clones surviving each treatment
+```{r}
+top_pcnt <- 10
+
+top_clones <- lapply(names(combined_data), function(x)  combined_data[[x]][order(combined_data[[x]]$average_RPM, decreasing = T),]$barcode[1:round(sum(combined_data[[x]]$average_RPM > 1)*top_pcnt/100)])
+names(top_clones) <- names(combined_data)
+
+
+
+# Define plotting colors
+colors = c(Cis = '#BEA733',
+           CoCl2 = '#00AB50',
+           Dab = '#00B1D9',
+           Tram = '#EB81B4',
+           Dox = '#8B008B',
+           Acid = '#F57F20')
+
+pdf(paste0('gDNA_overlaps/histograms_and_venn_top',top_pcnt,'_percent_clones.pdf'))
+venn(top_clones)
+for (i in names(combined_data)){
+  temp_df <- combined_data[[i]]
+  temp_df$top_clone <- FALSE
+  temp_df$top_clone[temp_df$barcode %in% top_clones[[i]]] <- TRUE
+  print(ggplot(temp_df[temp_df$average_RPM>1,], aes(x = reorder(barcode,-average_RPM), y = log2(average_RPM), fill = top_clone)) + geom_bar(stat = 'identity') +  
+          theme(axis.text.x=element_blank()) + labs(x = 'Rank ordered barcodes', y = 'Log(average of RPM across biological replicates)', title = paste(i, 'n =',length(temp_df[temp_df$average_RPM>1,]$barcode), 'total clones'))+ 
+  scale_fill_manual(values=c("#D3D3D3", as.character(colors[strsplit(i, '_')[[1]][2]]))))
+}
+dev.off()
+
+pdf(paste0('gDNA_overlaps/histograms_and_venn_top',top_pcnt,'_percent_clones_same_limits.pdf'))
+venn(top_clones)
+for (i in names(combined_data)){
+  temp_df <- combined_data[[i]]
+  temp_df$top_clone <- FALSE
+  temp_df$top_clone[temp_df$barcode %in% top_clones[[i]]] <- TRUE
+  print(ggplot(temp_df[temp_df$average_RPM>1,], aes(x = reorder(barcode,-average_RPM), y = log2(average_RPM), fill = top_clone)) + geom_bar(stat = 'identity') +  
+          theme(axis.text.x=element_blank()) + labs(x = 'Rank ordered barcodes', y = 'Log(average of RPM across biological replicates)', title = paste(i, 'n =',length(temp_df[temp_df$average_RPM>1,]$barcode), 'total clones'))+ 
+  scale_fill_manual(values=c("#D3D3D3", as.character(colors[strsplit(i, '_')[[1]][2]]))) +
+  coord_cartesian(ylim = c(0, 20)))
+}
+dev.off()
+
+
+
+
+
+```
+
+# Do pairwise odds ratios for overlapping lineages
+```{r}
+# build contingency table of odds of occurring across all detected clones and all treatments
+comb_df <- reduce(combined_data, full_join, by = "barcode") %>% replace(., is.na(.), 0)
+colnames(comb_df) <- c('barcode',names(combined_data))
+
+comb_df_binary <- data.frame(matrix(nrow = nrow(comb_df), ncol = ncol(comb_df)-1))
+rownames(comb_df_binary) <- comb_df$barcode
+colnames(comb_df_binary) <- names(combined_data)
+comb_df_binary[is.na(comb_df_binary)] <- 0
+comb_df_binary <- comb_df_binary[, c("DLS004_Dab_gDNA",
+                                     "DLS004_Tram_gDNA",
+                                     "DLS004_CoCl2_gDNA",
+                                     "DLS004_Acid_gDNA",
+                                     "DLS004_Cis_gDNA",
+                                     "DLS004_Dox_gDNA")]
+
+
+for (i in names(top_clones)){
+  comb_df_binary[which(rownames(comb_df_binary) %in% top_clones[[i]]),colnames(comb_df_binary) == i] <- 1
+  print(length(which(rownames(comb_df_binary) %in% top_clones[[i]])))
+}
+
+comb_df_binary <- comb_df_binary[rowSums(comb_df_binary)>0,]
+table(rowSums(comb_df_binary))
+
+list_cont_tabs <- list()
+odds <- c()
+pvals <- c()
+# Run the odds ratio in loop
+pdf('gDNA_overlaps/mosaic_plots.pdf')
+for(i in 1:(ncol(comb_df_binary)-1)){
+  for(j in (i+1):ncol(comb_df_binary)){
+    list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]] <- data.frame(matrix(nrow = 2, ncol = 2))
+    
+    list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]][1,1] <- sum(comb_df_binary[,i]+ comb_df_binary[,j] ==2)
+    list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]][1,2] <- sum(comb_df_binary[,i]- comb_df_binary[,j] == -1)
+    list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]][2,1] <- sum(comb_df_binary[,i]- comb_df_binary[,j] == 1)
+    list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]][2,2] <- sum(comb_df_binary[,i]+ comb_df_binary[,j] ==0)
+    
+    colnames(list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]]) <- c(paste0(names(comb_df_binary)[i],'_Top'), paste0(names(comb_df_binary)[i],'_Not'))
+    rownames(list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]]) <- c(paste0(names(comb_df_binary)[j],'_Top'), paste0(names(comb_df_binary)[j],'_Not'))
+    odds <- c(odds, fisher.test(list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]])$estimate)
+    pvals <- c(pvals, fisher.test(list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]])$p.value)
+    
+    mosaicplot(list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]], main = paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j], ' odds ratio ',fisher.test(list_cont_tabs[[paste0(names(comb_df_binary)[i],'::',names(comb_df_binary)[j])]])$estimate))
+  }
+}
+dev.off()
+names(odds) <- names(list_cont_tabs)
+names(pvals) <- names(list_cont_tabs)
+
+# Make into a heatmap
+heat_df <- data.frame(matrix(nrow = 6, ncol = 6))
+rownames(heat_df) <- colnames(comb_df_binary)
+colnames(heat_df) <- colnames(comb_df_binary)
+for(i in names(odds)){
+  t <- strsplit(i,'::')[[1]]
+  heat_df[colnames(heat_df) == t[1], rownames(heat_df) == t[2]] <- odds[i]
+}
+ # heat_df[is.na(heat_df)] <- 'NA'
+pdf('gDNA_overlaps/odds_ratios.pdf')
+pheatmap(log2(heat_df), na_col = 'white', cluster_rows = F, cluster_cols = F, display_numbers = T, color = rev(brewer.pal(11,'PiYG')))
+dev.off()
+```
+
+# Do pairwise odds ratios for overlapping lineages - expanded background
+```{r}
+# build contingency table of odds of occurring across all detected clones and all treatments
+comb_df_fullpool <- reduce(combined_data, full_join, by = "barcode") %>% replace(., is.na(.), 0)
+colnames(comb_df_fullpool) <- c('barcode',names(combined_data))
+
+comb_df_binary_fullpool <- data.frame(matrix(nrow = nrow(comb_df_fullpool), ncol = ncol(comb_df_fullpool)-1)) # Make an empty dataframe
+rownames(comb_df_binary_fullpool) <- comb_df_fullpool$barcode
+colnames(comb_df_binary_fullpool) <- names(combined_data)
+comb_df_binary_fullpool[is.na(comb_df_binary_fullpool)] <- 0
+comb_df_binary_fullpool <- comb_df_binary_fullpool[, c("DLS004_Dab_gDNA",
+                                     "DLS004_Tram_gDNA",
+                                     "DLS004_CoCl2_gDNA",
+                                     "DLS004_Acid_gDNA",
+                                     "DLS004_Cis_gDNA",
+                                     "DLS004_Dox_gDNA")]
+
+# Make all values that were in top clones for a condition 1 for that condition
+for (i in names(top_clones)){
+  comb_df_binary_fullpool[which(rownames(comb_df_binary_fullpool) %in% top_clones[[i]]),colnames(comb_df_binary_fullpool) == i] <- 1
+  print(length(which(rownames(comb_df_binary_fullpool) %in% top_clones[[i]])))
+}
+
+## Find all clones that were > 1 RPM for any condition
+all_clones_greater1_RPM_list <- lapply(combined_data, function(x) x$barcode[x$average_RPM > 1])
+all_clones_greater1_RPM <- unique(unlist(all_clones_greater1_RPM_list))
+comb_df_binary_fullpool <- comb_df_binary_fullpool[rownames(comb_df_binary_fullpool) %in% all_clones_greater1_RPM,]
+table(rowSums(comb_df_binary_fullpool))
+
+
+
+
+
+list_cont_tabs_fullpool <- list()
+odds <- c()
+pvals <- c()
+# Run the odds ratio in loop
+pdf('gDNA_overlaps/mosaic_plots_fullpool.pdf')
+for(i in 1:(ncol(comb_df_binary_fullpool)-1)){
+  for(j in (i+1):ncol(comb_df_binary_fullpool)){
+    list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]] <- data.frame(matrix(nrow = 2, ncol = 2))
+    
+    list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]][1,1] <- sum(comb_df_binary_fullpool[,i]+ comb_df_binary_fullpool[,j] ==2)
+    list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]][1,2] <- sum(comb_df_binary_fullpool[,i]- comb_df_binary_fullpool[,j] == -1)
+    list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]][2,1] <- sum(comb_df_binary_fullpool[,i]- comb_df_binary_fullpool[,j] == 1)
+    list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]][2,2] <- sum(comb_df_binary_fullpool[,i]+ comb_df_binary_fullpool[,j] ==0)
+    
+    colnames(list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]]) <- c(paste0(names(comb_df_binary_fullpool)[i],'_Top'), paste0(names(comb_df_binary_fullpool)[i],'_Not'))
+    rownames(list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]]) <- c(paste0(names(comb_df_binary_fullpool)[j],'_Top'), paste0(names(comb_df_binary_fullpool)[j],'_Not'))
+    odds <- c(odds, fisher.test(list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]])$estimate)
+    pvals <- c(pvals, fisher.test(list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]])$p.value)
+    
+    mosaicplot(list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]], main = paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j], ' odds ratio ',fisher.test(list_cont_tabs_fullpool[[paste0(names(comb_df_binary_fullpool)[i],'::',names(comb_df_binary_fullpool)[j])]])$estimate))
+  }
+}
+dev.off()
+names(odds) <- names(list_cont_tabs_fullpool)
+names(pvals) <- names(list_cont_tabs_fullpool)
+
+# Make into a heatmap
+heat_df_fullpool <- data.frame(matrix(nrow = 6, ncol = 6))
+rownames(heat_df_fullpool) <- colnames(comb_df_binary_fullpool)
+colnames(heat_df_fullpool) <- colnames(comb_df_binary_fullpool)
+for(i in names(odds)){
+  t <- strsplit(i,'::')[[1]]
+  heat_df_fullpool[colnames(heat_df_fullpool) == t[1], rownames(heat_df_fullpool) == t[2]] <- odds[i]
+}
+
+breaks = seq(-1,7)
+ # heat_df[is.na(heat_df)] <- 'NA'
+pdf('gDNA_overlaps/odds_ratios_fullpool.pdf')
+pheatmap(log2(heat_df_fullpool), na_col = 'white', cluster_rows = F, cluster_cols = F, display_numbers = T, color = brewer.pal(15,'Purples'), breaks = breaks)
+dev.off()
+```
+
+
